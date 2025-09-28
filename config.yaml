@@ -1,0 +1,51 @@
+# Wizard101 Gardening Bot Configuration
+
+# Launcher Settings
+launcher:
+  path: "C:/ProgramData/KingsIsle Entertainment/Wizard101/Wizard101.exe"
+  wait_timeout: 30
+  load_delay: 2.0
+
+# Automation Settings
+automation:
+  click_delay: 0.5      # Delay between clicks (seconds)
+  type_delay: 0.1       # Delay between keystrokes (seconds)
+  wait_delay: 2.0       # Default wait time (seconds)
+  # screenshot_delay: 1.0 # Delay before taking screenshots (disabled)
+
+# File Paths
+paths:
+  # screenshots: "screenshots"  # Disabled for GitHub repository
+  assets: "assets"
+  templates: "assets/templates"
+  logs: "logs"
+  database: "data/gardening.db"
+
+# Bot Behavior
+bot:
+  debug_mode: false
+  save_screenshots: false
+  max_retries: 3
+  retry_delay: 5.0
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  console_colors: true
+  file_logging: true
+  max_log_size: "10MB"
+  backup_count: 5
+
+# Future: Gardening Settings (placeholder)
+gardening:
+  auto_harvest: true
+  auto_plant: true
+  auto_water: true
+  check_interval: 300  # Check every 5 minutes when running
+
+# Calibrated Coordinates (auto-generated)
+coordinates:
+  password_field_x: 960
+  password_field_y: 1000
+  login_button_x: 1200
+  login_button_y: 1000
