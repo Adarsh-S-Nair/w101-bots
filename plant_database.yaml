@@ -1,0 +1,35 @@
+# Plant Database - Growth times and modifiers for Wizard101 plants
+# Times are in hours (HH:MM format)
+
+plants:
+  couch_potatoes:
+    name: "Couch Potatoes"
+    stages:
+      seedling_to_young: 13.0
+      young_to_mature: 29.0
+      mature_to_elder: 216.0
+    
+    growth_modifiers:
+      # Positive modifiers (speed up growth)
+      +10%:
+        - "King Parsley"
+        - "Ultra King Parsley"
+        - "Litter"
+      
+      +15%:
+        - "Botanical Gardens"
+        - "Country Cottage"
+        - "Everafter Village"
+        - "Outback Ranch"
+        - "Red Barn Farm"
+      
+      +20%:
+        - "Pixie"
+        - "Sandwich Station"
+      
+      +25%:
+        - "Tropical Garden Gnome"
+      
+      # Negative modifiers (slow down growth)
+      -25%:
+        - "Stinkweed"

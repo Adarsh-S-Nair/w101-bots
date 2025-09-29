@@ -5,6 +5,7 @@ from src.core.automation_base import AutomationBase
 from src.core.action_result import ActionResult
 from src.core.element import ElementSearchCriteria, ElementType, DetectionMethod
 from src.utils.logger import logger
+from src.utils.process_utils import ProcessUtils
 from src.constants import AssetPaths
 from config import config
 
@@ -18,6 +19,11 @@ class LoginAutomation(AutomationBase):
         """Execute login automation workflow"""
         try:
             logger.info("Starting login automation")
+            
+            # Check if game is already running based on initial state
+            if self.initial_game_state:
+                logger.info("Game is already running - skipping login automation")
+                return ActionResult.success_result("Game already running - login automation skipped")
             
             # Enter credentials
             result = self.enter_credentials()

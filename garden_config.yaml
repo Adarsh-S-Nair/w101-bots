@@ -1,0 +1,50 @@
+# Wizard101 Gardening Bot - Simple Garden Configuration
+
+# Movement pattern to get to your garden
+go_to_garden:
+  - key: "w"          # Move forward
+    duration: 1.53     # Hold for 4.6 seconds
+  - key: "a"          # Turn left
+    duration: 0.07     # Hold for 0.47 seconds
+  - key: "w"          # Move forward
+    duration: 2.5     # Hold for 2.5 seconds
+
+# Garden workflow - simple sequence of actions
+garden_actions:
+  # Enable/disable garden actions
+  enabled: true
+  
+  # Simple list of actions to perform
+  actions:
+    - key: "space"     # Remove barrier
+      duration: 0.1
+      wait_after: 1.0
+      harvest: false   # No harvesting after removing barrier
+    - key: "w"         # Move forward
+      duration: 0.23
+      wait_after: 0.5
+      harvest: true    # Harvest after moving to first section
+    - key: "d"         # Turn right
+      duration: 0.17 
+      wait_after: 0.5
+      harvest: false   # No harvesting after turning
+    - key: "w"         # Move forward
+      duration: 0.37
+      wait_after: 0.5
+      harvest: true    # Harvest after moving to second section
+    - key: "a"         # Turn left
+      duration: 0.35
+      wait_after: 0.5
+      harvest: false   # No harvesting after turning
+    - key: "w"         # Move forward
+      duration: 0.35
+      wait_after: 0.5
+      harvest: true    # Harvest after moving to third section
+    - key: "a"         # Turn left
+      duration: 0.6
+      wait_after: 0.5
+      harvest: false   # No harvesting after turning
+    - key: "w"         # Move forward
+      duration: 0.35
+      wait_after: 0.5
+      harvest: true    # Harvest after moving to fourth section

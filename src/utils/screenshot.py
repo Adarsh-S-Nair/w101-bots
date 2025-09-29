@@ -67,3 +67,4 @@ class ScreenshotManager:
         if cropped is not None:
             return self.save_screenshot(cropped, name)
         return None
+

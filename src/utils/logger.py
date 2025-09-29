@@ -72,3 +72,4 @@ def setup_logger(name: str = "w101_bot", level: int = logging.INFO) -> logging.L
 
 # Create default logger instance
 logger = setup_logger()
+

@@ -24,7 +24,7 @@ class UIDetector:
             DetectionMethod.COORDINATES
         ]
     
-    def find_element(self, criteria: ElementSearchCriteria) -> Optional[UIElement]:
+    def find_element(self, criteria: ElementSearchCriteria, silent: bool = False) -> Optional[UIElement]:
         """Find a UI element using the best available detection method"""
         logger.debug(f"Searching for element '{criteria.name}' using methods: {[m.value for m in criteria.detection_methods]}")
         
@@ -42,7 +42,8 @@ class UIDetector:
                 logger.debug(f"Detection method {method.value} failed for '{criteria.name}': {e}")
                 continue
         
-        logger.warning(f"Could not find element '{criteria.name}' using any available method")
+        if not silent:
+            logger.warning(f"Could not find element '{criteria.name}' using any available method")
         return None
     
     def find_elements(self, criteria_list: List[ElementSearchCriteria]) -> List[UIElement]:
@@ -85,5 +86,6 @@ class UIDetector:
     
     def is_element_present(self, criteria: ElementSearchCriteria) -> bool:
         """Check if an element is present without returning the full element"""
-        element = self.find_element(criteria)
+        element = self.find_element(criteria, silent=True)
         return element is not None and element.confidence >= criteria.confidence_threshold
+

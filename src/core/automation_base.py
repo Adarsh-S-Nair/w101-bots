@@ -17,6 +17,7 @@ class AutomationBase(ABC):
     def __init__(self, ui_detector: UIDetector):
         self.ui_detector = ui_detector
         self.name = self.__class__.__name__
+        self.initial_game_state = None  # Will be set by bot framework
         
     def find_and_click(self, criteria: ElementSearchCriteria, 
                       wait_time: float = 2.0, retries: int = 3) -> ActionResult:
@@ -33,6 +34,10 @@ class AutomationBase(ABC):
                         time.sleep(wait_time)
                         continue
                     return ActionResult.failure_result(f"Element '{criteria.name}' not found after {retries + 1} attempts")
+                
+                # Wait a moment before clicking to ensure UI is stable
+                logger.debug(f"Waiting 0.5s before clicking '{criteria.name}' to ensure UI stability...")
+                time.sleep(0.5)
                 
                 # Click on the element
                 return self.click_element(element)
@@ -62,6 +67,10 @@ class AutomationBase(ABC):
                         continue
                     return ActionResult.failure_result(f"Element '{criteria.name}' not found after {retries + 1} attempts")
                 
+                # Wait a moment before typing to ensure UI is stable
+                logger.debug(f"Waiting 0.5s before typing into '{criteria.name}' to ensure UI stability...")
+                time.sleep(0.5)
+                
                 # Type into the element
                 return self.type_into_element(element, text)
                 
@@ -85,7 +94,7 @@ class AutomationBase(ABC):
         while time.time() - start_time < timeout:
             attempts += 1
             try:
-                element = self.ui_detector.find_element(criteria)
+                element = self.ui_detector.find_element(criteria, silent=True)
                 if element:
                     wait_time = time.time() - start_time
                     logger.info(f"Element '{criteria.name}' found after {wait_time:.1f}s (attempt {attempts})")
@@ -94,10 +103,11 @@ class AutomationBase(ABC):
                         data={"element": element, "wait_time": wait_time, "attempts": attempts}
                     )
                 
-                # Log progress every 5 attempts to show it's still working
-                if attempts % 5 == 0:
+                # Log progress every 10 attempts to show it's still working
+                if attempts % 10 == 0:
                     elapsed = time.time() - start_time
-                    logger.debug(f"Still waiting for '{criteria.name}'... ({elapsed:.1f}s elapsed, attempt {attempts})")
+                    remaining = timeout - elapsed
+                    logger.info(f"Still waiting for '{criteria.name}'... ({elapsed:.1f}s elapsed, {remaining:.1f}s remaining)")
                 
                 time.sleep(check_interval)
                 
@@ -116,7 +126,7 @@ class AutomationBase(ABC):
         
         while time.time() - start_time < timeout:
             try:
-                element = self.ui_detector.find_element(criteria)
+                element = self.ui_detector.find_element(criteria, silent=True)
                 if not element:
                     logger.info(f"Element '{criteria.name}' disappeared after {time.time() - start_time:.1f}s")
                     return ActionResult.success_result(
@@ -136,11 +146,20 @@ class AutomationBase(ABC):
         """Click on a UI element"""
         try:
             logger.info(f"Clicking on '{element.name}' at {element.center}")
+            logger.debug(f"Element bounding box: {element.bounding_box}")
+            logger.debug(f"Detection method: {element.detection_method}")
+            logger.debug(f"Confidence: {element.confidence:.3f}")
             
             # Move mouse to element and click
             pyautogui.moveTo(element.center.x, element.center.y)
-            time.sleep(0.1)  # Small delay for visual feedback
+            time.sleep(0.2)  # Small delay for visual feedback and UI stability
+            
+            # Perform the click
             pyautogui.click()
+            logger.debug(f"Click performed at ({element.center.x}, {element.center.y})")
+            
+            # Add a small delay after clicking to allow UI to respond
+            time.sleep(0.5)
             
             return ActionResult.success_result(
                 f"Successfully clicked '{element.name}'",
@@ -148,6 +167,7 @@ class AutomationBase(ABC):
             )
             
         except Exception as e:
+            logger.error(f"Failed to click '{element.name}': {e}")
             return ActionResult.failure_result(f"Failed to click '{element.name}'", error=e)
     
     def type_into_element(self, element: UIElement, text: str) -> ActionResult:
@@ -221,6 +241,11 @@ class AutomationBase(ABC):
                 return ActionResult.failure_result("Action failed after all retries", error=e)
         
         return ActionResult.failure_result("Action failed after all retries")
+    
+    def set_initial_state(self, game_already_running: bool):
+        """Set the initial game state - called by bot framework"""
+        self.initial_game_state = game_already_running
+        logger.debug(f"{self.name}: Initial game state set to {'already running' if game_already_running else 'fresh startup'}")
     
     @abstractmethod
     def execute(self) -> ActionResult:

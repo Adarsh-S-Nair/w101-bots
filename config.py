@@ -106,6 +106,11 @@ class Config:
         return self.TEMPLATES_DIR / AssetPaths.GAME_TEMPLATES
     
     @property
+    def GARDENING_TEMPLATES_DIR(self) -> Path:
+        """Get gardening templates directory path"""
+        return self.TEMPLATES_DIR / AssetPaths.GARDENING_TEMPLATES
+    
+    @property
     def DEBUG_MODE(self) -> bool:
         return self._config_data['bot']['debug_mode']
     
@@ -180,6 +185,10 @@ class Config:
     def get_game_template_path(self, filename: str) -> str:
         """Get full path for a game template file"""
         return str(self.GAME_TEMPLATES_DIR / filename)
+    
+    def get_gardening_template_path(self, filename: str) -> str:
+        """Get full path for a gardening template file"""
+        return str(self.GARDENING_TEMPLATES_DIR / filename)
 
 # Create a global config instance
 config = Config()

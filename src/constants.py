@@ -30,6 +30,7 @@ class AssetPaths:
     # Template subdirectories
     LAUNCHER_TEMPLATES = "launcher"
     GAME_TEMPLATES = "game"
+    GARDENING_TEMPLATES = "gardening"
     
     # Specific template files
     class LauncherTemplates:
@@ -45,7 +46,32 @@ class AssetPaths:
     class GameTemplates:
         """Game-specific template files"""
         PLAY_BUTTON = "play_button.png"
+        TITLE_SCREEN = "title_screen.png"
+        SPELLBOOK = "spellbook.png"
+        HOUSING_NAV = "housing_nav.png"
+        CASTLES = "castles.png"
+        RED_BARN_FARM = "red_barn_farm.png"
+        EQUIP = "equip.png"
+        UNEQUIP = "unequip.png"
+        GO_HOME = "go_home.png"
+        CLOSE_CROWN_SHOP = "close_crown_shop.png"
+        CROWN_SHOP = "crown_shop.png"
+        PLACE_OBJECT = "place_object.png"
+        HOUSE_START = "house_start.png"
+        OUTSIDE_BUTTON = "outside_button.png"
         # Add more game templates here as needed
+    
+    class GardeningTemplates:
+        """Gardening-specific template files"""
+        ELDER_COUCH_POTATOES_READY = "elder_couch_potatoes_ready.png"
+        SEEDS_GARDENING_MENU = "seeds_gardening_menu.png"
+        COUCH_POTATOES_GARDENING_MENU = "couch_potatoes_gardening_menu.png"
+        PLANT_FIRST_SEED = "plant_first_seed.png"
+        UTILITY_GARDENING_MENU = "utility_gardening_menu.png"
+        PLANT_ALL = "plant_all.png"
+        PLANTED_COUCH_POTATO = "planted_couch_potato.png"
+        CONFIRM_PLANT_ALL = "confirm_plant_all.png"
+        # Add more gardening templates here as needed
         # Examples:
         # GARDEN_BUTTON = "garden_button.png"
         # HARVEST_BUTTON = "harvest_button.png"
@@ -60,6 +86,11 @@ class AssetPaths:
     def get_game_template_path(cls, filename: str) -> str:
         """Get full path for a game template file"""
         return f"{cls.TEMPLATES_BASE}/{cls.GAME_TEMPLATES}/{filename}"
+    
+    @classmethod
+    def get_gardening_template_path(cls, filename: str) -> str:
+        """Get full path for a gardening template file"""
+        return f"{cls.TEMPLATES_BASE}/{cls.GARDENING_TEMPLATES}/{filename}"
 
 # Automation constants
 class AutomationConstants:
