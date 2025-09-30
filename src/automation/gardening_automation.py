@@ -13,6 +13,7 @@ from src.utils.ocr_utils import OCRUtils
 from src.constants import AssetPaths
 from config import config
 from src.automation.movement_automation import MovementAutomation
+from src.data.plant_tracker import PlantTracker
 
 class GardeningAutomation(AutomationBase):
     """Handles gardening-specific automation tasks in Wizard101"""
@@ -22,6 +23,7 @@ class GardeningAutomation(AutomationBase):
         self.movement_automation = MovementAutomation(ui_detector)
         self.ocr_utils = OCRUtils()
         self.garden_config = self._load_garden_config()
+        self.plant_tracker = PlantTracker()
     
     def execute(self) -> ActionResult:
         """Execute gardening automation workflow"""
@@ -324,11 +326,11 @@ class GardeningAutomation(AutomationBase):
         try:
             logger.info("Starting replanting process for elder couch potatoes...")
             
-            # # Step 1: Plant the first seed
-            # logger.info("Step 1: Planting first seed...")
-            # first_seed_result = self.plant_first_seed()
-            # if not first_seed_result.success:
-            #     return first_seed_result
+            # Step 1: Plant the first seed
+            logger.info("Step 1: Planting first seed...")
+            first_seed_result = self.plant_first_seed()
+            if not first_seed_result.success:
+                return first_seed_result
             
             # Step 2: Plant all remaining seeds
             logger.info("Step 2: Planting all remaining seeds...")
@@ -641,6 +643,8 @@ class GardeningAutomation(AutomationBase):
                 plant_status = self._parse_plant_status(popup_result.data)
                 if plant_status:
                     self._log_plant_status(plant_status)
+                    # Save plant status to tracker for automation
+                    self._save_plant_status(plant_status)
                 else:
                     logger.warning("Failed to parse plant status from popup content")
             else:
@@ -714,6 +718,13 @@ class GardeningAutomation(AutomationBase):
             # Determine next stage and time to next stage
             next_stage, time_to_next = self._calculate_next_stage(current_stage, plant_data['stages'], modifiers)
             
+            # Calculate effective growth speed (multiplicative)
+            # Each modifier reduces time by its percentage
+            effective_speed_percent = 100
+            for percent in modifiers.values():
+                effective_speed_percent *= (1 - percent / 100)
+            effective_speed_percent = 100 - (effective_speed_percent * 100)
+            
             return {
                 'plant_name': plant_data['name'],
                 'current_stage': current_stage,
@@ -721,7 +732,7 @@ class GardeningAutomation(AutomationBase):
                 'time_to_next_hours': time_to_next,
                 'likes': likes,
                 'modifiers': modifiers,
-                'total_modifier_percent': sum(modifiers.values())
+                'effective_speed_percent': effective_speed_percent
             }
             
         except Exception as e:
@@ -746,14 +757,15 @@ class GardeningAutomation(AutomationBase):
         """Extract current plant stage from OCR text"""
         text_upper = text.upper()
         
-        # Look for progress indicators
-        if 'PROGRESS TO YOUNG:' in text_upper:
+        # Look for progress indicators - handle OCR misreading issues
+        # OCR sometimes reads "PROGRESS" as "$" or other characters
+        if 'PROGRESS TO YOUNG:' in text_upper or 'TO YOUNG:' in text_upper:
             return 'seedling'
-        elif 'PROGRESS TO MATURE:' in text_upper:
+        elif 'PROGRESS TO MATURE:' in text_upper or 'TO MATURE:' in text_upper:
             return 'young'
-        elif 'PROGRESS TO ELDER:' in text_upper:
+        elif 'PROGRESS TO ELDER:' in text_upper or 'TO ELDER:' in text_upper:
             return 'mature'
-        elif 'ELDER' in text_upper and 'PROGRESS' not in text_upper:
+        elif 'ELDER' in text_upper and ('PROGRESS' not in text_upper and 'TO ' not in text_upper):
             return 'elder'
         
         return None
@@ -765,8 +777,21 @@ class GardeningAutomation(AutomationBase):
         
         for line in lines:
             line = line.strip()
-            if line.upper().startswith('LIKES:'):
-                like_item = line.replace('LIKES:', '').strip()
+            # Handle OCR misreading of "LIKES:" as "IKES:" or "ES:"
+            if (line.upper().startswith('LIKES:') or 
+                line.upper().startswith('IKES:') or 
+                line.upper().startswith('ES:')):
+                
+                # Extract the like item, handling different prefixes
+                if line.upper().startswith('LIKES:'):
+                    like_item = line.replace('LIKES:', '').strip()
+                elif line.upper().startswith('IKES:'):
+                    like_item = line.replace('IKES:', '').strip()
+                elif line.upper().startswith('ES:'):
+                    like_item = line.replace('ES:', '').strip()
+                else:
+                    like_item = ''
+                
                 if like_item:
                     # Clean up OCR anomalies
                     like_item = self._clean_like_item(like_item)
@@ -821,6 +846,10 @@ class GardeningAutomation(AutomationBase):
         like_upper = like.upper().strip()
         item_upper = database_item.upper().strip()
         
+        # Special case: Garden Gnomes is an alias for Tropical Garden Gnome
+        if like_upper == "GARDEN GNOMES" and item_upper == "TROPICAL GARDEN GNOME":
+            return True
+        
         # Exact match
         if like_upper == item_upper:
             return True
@@ -850,9 +879,12 @@ class GardeningAutomation(AutomationBase):
             stage_key = f"{current_stage}_to_{next_stage}"
             base_time = stages.get(stage_key, 0)
             
-            # Apply modifiers (positive modifiers make growth faster = less time)
-            total_modifier = sum(modifiers.values())
-            modified_time = base_time * (1 - total_modifier / 100)
+            # Apply modifiers multiplicatively (positive modifiers make growth faster = less time)
+            # Each modifier reduces time by its percentage
+            modified_time = base_time
+            for item, percent in modifiers.items():
+                # Apply each modifier: reduce time by the percentage
+                modified_time = modified_time * (1 - percent / 100)
             
             return next_stage, modified_time
             
@@ -868,7 +900,7 @@ class GardeningAutomation(AutomationBase):
         logger.info(f"Plant: {status['plant_name']}")
         logger.info(f"Current Stage: {status['current_stage'].upper()}")
         logger.info(f"Next Stage: {status['next_stage'].upper()}")
-        logger.info(f"Time to Next Stage: {status['time_to_next_hours']:.1f} hours")
+        logger.info(f"Time to Next Stage: {status['time_to_next_hours']:.4f} hours")
         logger.info("")
         logger.info("LIKES:")
         for like in status['likes']:
@@ -882,6 +914,20 @@ class GardeningAutomation(AutomationBase):
         else:
             logger.info("  No growth modifiers found")
         logger.info(f"")
-        logger.info(f"TOTAL MODIFIER: {status['total_modifier_percent']:+.0f}%")
+        logger.info(f"EFFECTIVE GROWTH SPEED: {status['effective_speed_percent']:.2f}% of base time (multiplicative)")
+        logger.info(f"TIME REDUCTION: {100 - status['effective_speed_percent']:.2f}%")
         logger.info("=" * 50)
+    
+    def _save_plant_status(self, plant_status: dict) -> bool:
+        """Save plant status to the plant tracker for automation"""
+        try:
+            success = self.plant_tracker.update_plant_status(plant_status)
+            if success:
+                logger.info(f"Plant status saved for {plant_status.get('plant_name', 'unknown')}")
+            else:
+                logger.warning("Failed to save plant status to tracker")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to save plant status: {e}")
+            return False
     

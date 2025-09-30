@@ -37,16 +37,16 @@ class EnterGameAutomation(AutomationBase):
     def _handle_already_running_game(self) -> ActionResult:
         """Handle case where game is already running"""
         try:
-            # Check for crown shop and close it if present
-            result = self._check_and_close_crown_shop()
-            if not result.success:
-                logger.warning(f"Crown shop handling failed: {result.message}")
-                # Continue anyway, don't fail the entire process
-            
             # Wait for spellbook to verify we're in the game
             result = self.wait_for_spellbook()
             if not result.success:
                 return result
+            
+            # Check for crown shop and close it if present (only after confirming we're in the game)
+            result = self._check_and_close_crown_shop()
+            if not result.success:
+                logger.warning(f"Crown shop handling failed: {result.message}")
+                # Continue anyway, don't fail the entire process
             
             logger.info("Successfully entered already running game")
             return ActionResult.success_result("Successfully entered already running game")
@@ -72,16 +72,16 @@ class EnterGameAutomation(AutomationBase):
             if not result.success:
                 return result
             
-            # Check for crown shop and close it if present
-            result = self._check_and_close_crown_shop()
-            if not result.success:
-                logger.warning(f"Crown shop handling failed: {result.message}")
-                # Continue anyway, don't fail the entire process
-            
             # Wait for spellbook to appear (verify we're in the game)
             result = self.wait_for_spellbook()
             if not result.success:
                 return result
+            
+            # Check for crown shop and close it if present (only after confirming we're in the game)
+            result = self._check_and_close_crown_shop()
+            if not result.success:
+                logger.warning(f"Crown shop handling failed: {result.message}")
+                # Continue anyway, don't fail the entire process
             
             logger.info("Successfully completed fresh game startup")
             return ActionResult.success_result("Successfully completed fresh game startup")

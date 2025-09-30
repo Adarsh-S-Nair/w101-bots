@@ -15,7 +15,7 @@ class ModularBot:
     
     def __init__(self, automation_type: str = "gardening"):
         self.automation_type = automation_type
-        self.framework = BotFramework()
+        self.framework = BotFramework(automation_type)
         self.registry = AutomationRegistry()
         
         # Register automation types
@@ -32,6 +32,12 @@ class ModularBot:
         self.registry.register_automation_type("gardening", [
             HousingNavigationAutomation,
             GardeningAutomation
+        ])
+        
+        # Trivia automation
+        from src.automation.trivia_automation import TriviaAutomation
+        self.registry.register_automation_type("trivia", [
+            TriviaAutomation
         ])
         
         # Future automation types can be added here

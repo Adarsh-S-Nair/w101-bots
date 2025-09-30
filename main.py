@@ -18,7 +18,7 @@ def main():
     parser.add_argument(
         "--type", 
         default="gardening",
-        choices=["gardening"],  # Add more types as they're implemented
+        choices=["gardening", "trivia"],  # Add more types as they're implemented
         help="Type of automation to run (default: gardening)"
     )
     parser.add_argument(

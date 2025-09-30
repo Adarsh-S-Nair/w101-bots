@@ -1,0 +1,43 @@
+# Automation Configuration for Wizard101 Gardening Bot
+# This file controls when and how the bot should run
+
+# General automation settings
+automation:
+  enabled: true
+  check_interval_minutes: 30  # How often to check if bot should run
+  max_idle_hours: 24         # Max hours to wait before forcing a check
+  
+# Plant monitoring settings
+plant_monitoring:
+  # Minimum time between plant checks (in hours)
+  min_check_interval: 1.0
+  
+  # Plants that are ready for harvesting
+  ready_threshold_hours: 0.0
+  
+  # Plants that need attention soon
+  attention_threshold_hours: 2.0
+
+# Notification settings (for future implementation)
+notifications:
+  enabled: false
+  # Add notification methods here (email, discord, etc.)
+
+# Bot behavior settings
+bot_behavior:
+  # Whether to run the full gardening workflow
+  run_gardening: true
+  
+  # Whether to update plant status
+  update_plant_status: true
+  
+  # Whether to save plant data
+  save_plant_data: true
+
+# Data retention settings
+data_retention:
+  # Keep plant data for this many days
+  keep_data_days: 30
+  
+  # Clean up old data automatically
+  auto_cleanup: true

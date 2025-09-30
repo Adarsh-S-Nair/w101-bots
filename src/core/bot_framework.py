@@ -16,25 +16,31 @@ from config import config
 class BotFramework:
     """Core bot framework that handles common startup functionality"""
     
-    def __init__(self):
+    def __init__(self, bot_type: str = "gardening"):
+        self.bot_type = bot_type
         self.ui_detector = UIDetector()
         self.core_modules: List[AutomationBase] = []
         self.custom_modules: List[AutomationBase] = []
         
-        # Initialize core modules (always needed)
+        # Initialize core modules based on bot type
         self._initialize_core_modules()
         
-        logger.info("Bot Framework initialized")
+        logger.info(f"Bot Framework initialized for {bot_type} bot")
     
     def _initialize_core_modules(self):
-        """Initialize core automation modules that are common to all bots"""
-        self.core_modules = [
-            LauncherAutomation(self.ui_detector),
-            LoginAutomation(self.ui_detector),
-            EnterGameAutomation(self.ui_detector),
-        ]
-        
-        logger.info(f"Initialized {len(self.core_modules)} core automation modules")
+        """Initialize core automation modules based on bot type"""
+        if self.bot_type == "trivia":
+            # Trivia bots don't need game launcher/login modules
+            self.core_modules = []
+            logger.info("Trivia bot: No core modules needed")
+        else:
+            # Game-based bots need launcher, login, and game entry
+            self.core_modules = [
+                LauncherAutomation(self.ui_detector),
+                LoginAutomation(self.ui_detector),
+                EnterGameAutomation(self.ui_detector),
+            ]
+            logger.info(f"Initialized {len(self.core_modules)} core automation modules")
     
     def add_custom_module(self, module: AutomationBase):
         """Add a custom automation module"""

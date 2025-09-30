@@ -111,6 +111,11 @@ class Config:
         return self.TEMPLATES_DIR / AssetPaths.GARDENING_TEMPLATES
     
     @property
+    def TRIVIA_TEMPLATES_DIR(self) -> Path:
+        """Get trivia templates directory path"""
+        return self.TEMPLATES_DIR / AssetPaths.TRIVIA_TEMPLATES
+    
+    @property
     def DEBUG_MODE(self) -> bool:
         return self._config_data['bot']['debug_mode']
     
@@ -189,6 +194,10 @@ class Config:
     def get_gardening_template_path(self, filename: str) -> str:
         """Get full path for a gardening template file"""
         return str(self.GARDENING_TEMPLATES_DIR / filename)
+    
+    def get_trivia_template_path(self, filename: str) -> str:
+        """Get full path for a trivia template file"""
+        return str(self.TRIVIA_TEMPLATES_DIR / filename)
 
 # Create a global config instance
 config = Config()

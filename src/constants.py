@@ -31,6 +31,7 @@ class AssetPaths:
     LAUNCHER_TEMPLATES = "launcher"
     GAME_TEMPLATES = "game"
     GARDENING_TEMPLATES = "gardening"
+    TRIVIA_TEMPLATES = "trivia"
     
     # Specific template files
     class LauncherTemplates:
@@ -77,6 +78,48 @@ class AssetPaths:
         # HARVEST_BUTTON = "harvest_button.png"
         # PLANT_BUTTON = "plant_button.png"
     
+    class TriviaTemplates:
+        """Trivia-specific template files"""
+        # Login and authentication
+        W101_LOGO = "w101_logo.png"
+        LOGIN_BUTTON = "login_button.png"
+        USERNAME_FIELD = "username_field.png"
+        PASSWORD_FIELD = "password_field.png"
+        PLAY_NOW_BUTTON = "play_now_button.png"
+        
+        # Trivia selection
+        KINGSISLE_TRIVIA = "kingsisle_trivia.png"
+        WIZARD101_TRIVIA = "wizard101_trivia.png"
+        AUSTIN_TEXAS_TRIVIA = "austin_texas_trivia.png"
+        TRIVIA_BANNER = "trivia_banner.png"
+        GOOGLE_SEARCH_ICON = "google_search_icon.png"
+        
+        # Question interface
+        QUESTION_TEXT = "question_text.png"
+        ANSWER_OPTION_A = "answer_option_a.png"
+        ANSWER_OPTION_B = "answer_option_b.png"
+        ANSWER_OPTION_C = "answer_option_c.png"
+        ANSWER_OPTION_D = "answer_option_d.png"
+        
+        # Navigation and completion
+        NEXT_QUESTION = "next_question.png"
+        NEXT_QUESTION_BUTTON = "next_question_button.png"
+        GET_MY_RESULTS_BUTTON = "get_my_results_button.png"
+        SUBMIT_ANSWER = "submit_answer.png"
+        SUBMIT_ANSWER_BUTTON = "submit_answer_button.png"
+        CONTINUE_BUTTON = "continue_button.png"
+        FINISH_BUTTON = "finish_button.png"
+        
+        # Rewards and results
+        REWARD_POPUP = "reward_popup.png"
+        CLAIM_REWARD = "claim_reward.png"
+        CLAIM_YOUR_REWARD_BUTTON = "claim_your_reward_button.png"
+        SECOND_CLAIM_YOUR_REWARD_BUTTON = "second_claim_your_reward_button.png"
+        TAKE_ANOTHER_QUIZ_BUTTON = "take_another_quiz_button.png"
+        RESULTS_SCREEN = "results_screen.png"
+        
+        # Add more trivia templates here as needed
+    
     @classmethod
     def get_launcher_template_path(cls, filename: str) -> str:
         """Get full path for a launcher template file"""
@@ -91,6 +134,11 @@ class AssetPaths:
     def get_gardening_template_path(cls, filename: str) -> str:
         """Get full path for a gardening template file"""
         return f"{cls.TEMPLATES_BASE}/{cls.GARDENING_TEMPLATES}/{filename}"
+    
+    @classmethod
+    def get_trivia_template_path(cls, filename: str) -> str:
+        """Get full path for a trivia template file"""
+        return f"{cls.TEMPLATES_BASE}/{cls.TRIVIA_TEMPLATES}/{filename}"
 
 # Automation constants
 class AutomationConstants:
@@ -100,15 +148,19 @@ class AutomationConstants:
     DEFAULT_CONFIDENCE_THRESHOLD = 0.8
     LAUNCHER_CONFIDENCE_THRESHOLD = 0.7
     GAME_CONFIDENCE_THRESHOLD = 0.8
+    TRIVIA_CONFIDENCE_THRESHOLD = 0.7
     
     # Timeout values (in seconds)
     DEFAULT_TIMEOUT = 30.0
     LOGIN_TIMEOUT = 60.0
     GAME_LOAD_TIMEOUT = 300.0  # 5 minutes for game loading
+    TRIVIA_PAGE_LOAD_TIMEOUT = 15.0  # Trivia page load timeout
+    QUESTION_LOAD_TIMEOUT = 10.0  # Question loading timeout
     
     # Check intervals (in seconds)
     DEFAULT_CHECK_INTERVAL = 2.0
     GAME_LOAD_CHECK_INTERVAL = 5.0
+    TRIVIA_CHECK_INTERVAL = 1.0  # Faster checks for trivia interactions
 
 # Element types for UI detection
 class ElementTypes:

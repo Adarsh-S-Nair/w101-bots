@@ -1,12 +1,32 @@
 #!/bin/bash
 
-# Wizard101 Gardening Bot - Start Script
+# Wizard101 Bot - Start Script
 # This script sets up the virtual environment and runs the bot
 
 set -e  # Exit on any error
 
-echo "🌱 Wizard101 Gardening Bot - Starting Setup"
-echo "=========================================="
+# Parse command line arguments
+BOT_TYPE=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --gardening)
+            BOT_TYPE="gardening"
+            shift
+            ;;
+        --trivia)
+            BOT_TYPE="trivia"
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--gardening|--trivia]"
+            exit 1
+            ;;
+    esac
+done
+
+echo "🎮 Wizard101 Bot - Starting Setup"
+echo "================================="
 
 # Check if Python is installed
 if ! command -v python3 &> /dev/null; then
@@ -66,9 +86,33 @@ if [ ! -f ".env" ]; then
     fi
 fi
 
+# Show menu if no bot type was specified
+if [ -z "$BOT_TYPE" ]; then
+    echo ""
+    echo "🤖 Select Bot Type:"
+    echo "=================="
+    echo "1) Gardening Bot"
+    echo "2) Trivia Bot"
+    echo ""
+    read -p "Enter your choice (1-2): " choice
+    
+    case $choice in
+        1)
+            BOT_TYPE="gardening"
+            ;;
+        2)
+            BOT_TYPE="trivia"
+            ;;
+        *)
+            echo "❌ Invalid choice. Exiting..."
+            exit 1
+            ;;
+    esac
+fi
+
 # Run the bot
-echo "🚀 Starting Wizard101 Gardening Bot..."
+echo "🚀 Starting Wizard101 $BOT_TYPE Bot..."
 echo "=========================================="
-python main.py
+python main.py --type "$BOT_TYPE"
 
 echo "👋 Bot session ended"
