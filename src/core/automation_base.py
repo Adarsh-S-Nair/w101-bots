@@ -89,7 +89,6 @@ class AutomationBase(ABC):
         start_time = time.time()
         attempts = 0
         
-        logger.info(f"Waiting for element '{criteria.name}' (timeout: {timeout}s, check interval: {check_interval}s)")
         
         while time.time() - start_time < timeout:
             attempts += 1
@@ -97,17 +96,11 @@ class AutomationBase(ABC):
                 element = self.ui_detector.find_element(criteria, silent=True)
                 if element:
                     wait_time = time.time() - start_time
-                    logger.info(f"Element '{criteria.name}' found after {wait_time:.1f}s (attempt {attempts})")
                     return ActionResult.success_result(
                         f"Element '{criteria.name}' found",
                         data={"element": element, "wait_time": wait_time, "attempts": attempts}
                     )
                 
-                # Log progress every 10 attempts to show it's still working
-                if attempts % 10 == 0:
-                    elapsed = time.time() - start_time
-                    remaining = timeout - elapsed
-                    logger.info(f"Still waiting for '{criteria.name}'... ({elapsed:.1f}s elapsed, {remaining:.1f}s remaining)")
                 
                 time.sleep(check_interval)
                 

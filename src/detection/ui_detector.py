@@ -33,7 +33,6 @@ class UIDetector:
             try:
                 element = self._try_detection_method(criteria, method)
                 if element and element.confidence >= criteria.confidence_threshold:
-                    logger.info(f"Found '{criteria.name}' using {method.value} method with confidence {element.confidence:.3f}")
                     return element
                 elif element:
                     logger.debug(f"Found '{criteria.name}' using {method.value} but confidence {element.confidence:.3f} below threshold {criteria.confidence_threshold}")

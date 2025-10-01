@@ -80,8 +80,18 @@ class OCRUtils:
                         processed_image = preprocess_method(gray)
                         logger.debug(f"Trying preprocessing method {method_idx + 1}")
                         
-                        # Try OCR with this processed image
-                        test_text = pytesseract.image_to_string(processed_image, config='--psm 4')
+                        # Try OCR with this processed image - use multiple PSM modes for better accuracy
+                        psm_modes = ['--psm 4', '--psm 6', '--psm 8', '--psm 13']
+                        test_text = ""
+                        
+                        for psm in psm_modes:
+                            try:
+                                temp_text = pytesseract.image_to_string(processed_image, config=psm)
+                                temp_score = self._score_ocr_text(temp_text)
+                                if temp_score > self._score_ocr_text(test_text):
+                                    test_text = temp_text
+                            except:
+                                continue
                         
                         # Score this result
                         score = self._score_ocr_text(test_text)
@@ -156,15 +166,19 @@ class OCRUtils:
         
         if 'COUCH POTATOES' in text_upper:
             score += 10
-        if 'LIKES:' in text_upper:
+        if 'LIKES:' in text_upper or 'IKES:' in text_upper:
             score += 5
-        if 'NEEDS:' in text_upper:
+        if 'NEEDS:' in text_upper or 'FEDS:' in text_upper:
             score += 3
-        if 'PESTS:' in text_upper:
+        if 'PESTS:' in text_upper or 'ESTS:' in text_upper:
             score += 3
-        if 'PROGRESS' in text_upper:
+        if 'PROGRESS' in text_upper or 'STOELLR' in text_upper:
             score += 2
         if 'YOUNG' in text_upper:
+            score += 1
+        if 'MATURE' in text_upper:
+            score += 1
+        if 'ELDER' in text_upper:
             score += 1
         if 'GARDEN' in text_upper:
             score += 1
@@ -176,6 +190,8 @@ class OCRUtils:
             score += 1
         if 'HOUSE' in text_upper:
             score += 1
+        if 'HARVEST' in text_upper or 'TIL HARVEST' in text_upper:
+            score += 2
             
         return score
     
@@ -186,13 +202,31 @@ class OCRUtils:
             
             # Common OCR error patterns and their corrections
             corrections = {
+                # Progress indicators
+                r'STOELLR:\s*Cj': 'PROGRESS TO ELDER:',
+                r'STOELLR:\s*YOUNG': 'PROGRESS TO YOUNG:',
+                r'STOELLR:\s*MATURE': 'PROGRESS TO MATURE:',
+                r'STOELLR:\s*ELDER': 'PROGRESS TO ELDER:',
                 r'\$ TO YOUNG:': 'PROGRESS TO YOUNG:',
+                r'PROGRESS\s*TO\s*YOUNG:': 'PROGRESS TO YOUNG:',
+                r'PROGRESS\s*TO\s*MATURE:': 'PROGRESS TO MATURE:',
+                r'PROGRESS\s*TO\s*ELDER:': 'PROGRESS TO ELDER:',
+                
+                # Section headers
+                r'^FEDS:': 'NEEDS:',
                 r'^EDS:': 'NEEDS:',
+                r'^ESTS:': 'PESTS:',
                 r'^STS:': 'PESTS:',
+                r'^IKES:': 'LIKES:',
                 r'^KES:': 'LIKES:',
                 r'^i\$:': 'LIKES:',
                 r'^\$:': 'LIKES:',
-                r'PROGRESS\s*TO\s*YOUNG:': 'PROGRESS TO YOUNG:',
+                r'^ES:': 'LIKES:',
+                
+                # Time indicators
+                r'TIL HARVEST:': 'TIME TO HARVEST:',
+                
+                # Clean up spacing and formatting
                 r'NEEDS:\s*NONE\s*CURRENTLY': 'NEEDS: NONE CURRENTLY',
                 r'PESTS:\s*NONE\s*CURRENTLY': 'PESTS: NONE CURRENTLY',
                 r'LIKES:\s*GARDEN\s*GNOMES': 'LIKES: GARDEN GNOMES',

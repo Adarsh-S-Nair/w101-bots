@@ -9,6 +9,19 @@ plants:
       young_to_mature: 29.0
       mature_to_elder: 216.0
     
+    # How to handle plant needs for this plant
+    needs_handling:
+      steps:
+        - category: "GROWING_SPELLS"
+          spell: "DOWNPOUR"           
+          description: "Provide rain for a large area"
+        - category: "GROWING_SPELLS"
+          spell: "FLUTE_ENSEMBLE"           
+          description: "Provide music for a large area"
+        - category: "PEST_SPELLS"
+          spell: "GUSTY_WINDS"           
+          description: "Kill rank 1 & 2 pests"
+    
     growth_modifiers:
       # Positive modifiers (speed up growth)
       +10%:

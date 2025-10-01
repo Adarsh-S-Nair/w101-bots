@@ -62,10 +62,6 @@ else
     exit 1
 fi
 
-# Upgrade pip
-echo "⬆️  Upgrading pip..."
-pip install --upgrade pip
-
 # Install requirements
 echo "📥 Installing requirements..."
 pip install -r requirements.txt

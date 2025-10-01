@@ -1,5 +1,18 @@
 # Wizard101 Gardening Bot - Simple Garden Configuration
 
+# Which plant is being grown on this plot (matches plant_database keys exactly)
+plot_plant_type: "couch_potatoes"
+
+# Spell casting configuration
+spell_casting:
+  # Coordinates to move mouse to after selecting a spell (before casting)
+  target_x: 1750    # Center of screen horizontally
+  target_y: 530    # Center of screen vertically
+  # Time to wait after moving mouse (in seconds) - for testing purposes
+  wait_after_positioning: 10
+  # Time to wait after casting a spell (in seconds) - allow for game lag
+  wait_after_casting: 40
+
 # Movement pattern to get to your garden
 go_to_garden:
   - key: "w"          # Move forward
@@ -7,7 +20,7 @@ go_to_garden:
   - key: "a"          # Turn left
     duration: 0.07     # Hold for 0.47 seconds
   - key: "w"          # Move forward
-    duration: 2.5     # Hold for 2.5 seconds
+    duration: 3.5     # Hold for 2.5 seconds
 
 # Garden workflow - simple sequence of actions
 garden_actions:

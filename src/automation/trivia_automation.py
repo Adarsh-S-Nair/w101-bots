@@ -34,6 +34,56 @@ class TriviaAutomation(AutomationBase):
         self.screenshot_manager = ScreenshotManager()
         self.trivia_database = self._load_trivia_database()
     
+    def _create_trivia_button_criteria(self, button_name: str, template_filename: str) -> ElementSearchCriteria:
+        """Helper to create ElementSearchCriteria for a trivia button template"""
+        return ElementSearchCriteria(
+            name=button_name,
+            element_type=ElementType.BUTTON,
+            template_path=config.get_trivia_template_path(template_filename),
+            confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
+            detection_methods=[DetectionMethod.TEMPLATE]
+        )
+    
+    def _wait_and_click_trivia_button(self, button_name: str, template_filename: str, 
+                                      timeout: float = 15.0, post_click_delay: float = 1.0) -> ActionResult:
+        """Helper to wait for a trivia button to appear and click it"""
+        logger.info(f"Waiting for {button_name} to appear...")
+        
+        criteria = self._create_trivia_button_criteria(button_name, template_filename)
+        result = self.wait_for_element(criteria, timeout=timeout, check_interval=0.5)
+        
+        if result.success:
+            logger.info(f"{button_name} found")
+            click_result = self.find_and_click(criteria, wait_time=1.0, retries=2)
+            
+            if click_result.success:
+                if post_click_delay > 0:
+                    time.sleep(post_click_delay)
+                return ActionResult.success_result(f"{button_name} clicked successfully")
+            else:
+                logger.error(f"Failed to click {button_name}")
+                return ActionResult.failure_result(f"Failed to click {button_name}")
+        else:
+            logger.warning(f"{button_name} did not appear within timeout period")
+            return ActionResult.failure_result(f"{button_name} not found within timeout")
+    
+    def _wait_for_trivia_button(self, button_name: str, template_filename: str, 
+                                timeout: float = 15.0, post_wait_delay: float = 0.0) -> ActionResult:
+        """Helper to wait for a trivia button to appear (without clicking)"""
+        logger.info(f"Waiting for {button_name} to appear...")
+        
+        criteria = self._create_trivia_button_criteria(button_name, template_filename)
+        result = self.wait_for_element(criteria, timeout=timeout, check_interval=0.5)
+        
+        if result.success:
+            logger.info(f"{button_name} found")
+            if post_wait_delay > 0:
+                time.sleep(post_wait_delay)
+            return ActionResult.success_result(f"{button_name} found")
+        else:
+            logger.warning(f"{button_name} did not appear within timeout period")
+            return ActionResult.failure_result(f"{button_name} not found within timeout")
+    
     def execute(self) -> ActionResult:
         """Execute trivia automation workflow"""
         try:
@@ -236,38 +286,11 @@ class TriviaAutomation(AutomationBase):
     def _wait_for_w101_logo(self) -> ActionResult:
         """Wait for W101 logo to confirm we're on the site"""
         try:
-            logger.info("Waiting for W101 logo to confirm we're on the site...")
-            
-            # Wait for W101 logo to appear
-            max_attempts = 20  # 20 seconds max wait time
-            attempt = 0
-            
-            while attempt < max_attempts:
-                attempt += 1
-                logger.info(f"Attempt {attempt}/{max_attempts} to find W101 logo...")
-                
-                # Look for W101 logo using template matching
-                logo_criteria = ElementSearchCriteria(
-                    name="W101 Logo",
-                    element_type=ElementType.BUTTON,
-                    detection_methods=[DetectionMethod.TEMPLATE],
-                    confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
-                    template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.W101_LOGO)
-                )
-                
-                # Try to find the W101 logo
-                logo_element = self.ui_detector.find_element(logo_criteria)
-                
-                if logo_element:
-                    logger.info(f"Found W101 logo at {logo_element.bounding_box} - confirmed we're on the site")
-                    return ActionResult.success_result("W101 logo found - site loaded")
-                else:
-                    logger.info(f"W101 logo not found on attempt {attempt}, waiting 1 second...")
-                    time.sleep(1)
-            
-            logger.warning("W101 logo not found after all attempts - site may not have loaded properly")
-            return ActionResult.failure_result("W101 logo not found within expected time")
-            
+            return self._wait_for_trivia_button(
+                "W101 Logo",
+                AssetPaths.TriviaTemplates.W101_LOGO,
+                timeout=20.0
+            )
         except Exception as e:
             logger.error(f"Error waiting for W101 logo: {e}")
             return ActionResult.failure_result(f"Failed to wait for W101 logo: {e}", error=e)
@@ -555,27 +578,11 @@ class TriviaAutomation(AutomationBase):
     def _check_trivia_banner_present(self) -> ActionResult:
         """Check if the trivia banner is present to determine if trivia is available"""
         try:
-            logger.info("Checking if trivia banner is present...")
-            
-            # Look for trivia banner using template matching
-            banner_criteria = ElementSearchCriteria(
-                name="Trivia Banner",
-                element_type=ElementType.BUTTON,
-                detection_methods=[DetectionMethod.TEMPLATE],
-                confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
-                template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.TRIVIA_BANNER)
+            return self._wait_for_trivia_button(
+                "Trivia Banner",
+                AssetPaths.TriviaTemplates.TRIVIA_BANNER,
+                timeout=1.5
             )
-            
-            # Try to find the trivia banner with a short timeout
-            result = self.wait_for_element(banner_criteria, timeout=1.5, check_interval=0.2)
-            
-            if result.success:
-                logger.info("Trivia banner found - trivia is available")
-                return ActionResult.success_result("Trivia banner found - trivia is available")
-            else:
-                logger.info("Trivia banner not found - trivia may be completed")
-                return ActionResult.failure_result("Trivia banner not found - trivia may be completed")
-            
         except Exception as e:
             logger.error(f"Error checking trivia banner: {e}")
             return ActionResult.failure_result(f"Failed to check trivia banner: {e}", error=e)
@@ -585,7 +592,6 @@ class TriviaAutomation(AutomationBase):
     def _extract_trivia_content(self) -> ActionResult:
         """Extract question from the trivia page using template detection and mouse positioning"""
         try:
-            logger.info("Looking for trivia banner to position mouse...")
             
             # Wait for trivia banner to appear with retry logic
             max_attempts = 15  # 15 seconds max wait time
@@ -593,7 +599,6 @@ class TriviaAutomation(AutomationBase):
             
             while attempt < max_attempts:
                 attempt += 1
-                logger.info(f"Attempt {attempt}/{max_attempts} to find trivia banner...")
                 
                 # Look for trivia banner using template matching
                 banner_criteria = ElementSearchCriteria(
@@ -608,17 +613,14 @@ class TriviaAutomation(AutomationBase):
                 banner_element = self.ui_detector.find_element(banner_criteria)
                 
                 if banner_element:
-                    logger.info(f"Found trivia banner at {banner_element.bounding_box}")
                     
                     # Move mouse to banner center
                     center = banner_element.center
                     pyautogui.moveTo(center.x, center.y)
-                    logger.info(f"Moved mouse to banner center: ({center.x}, {center.y})")
                     
                     # Move mouse 45 pixels down from banner
                     question_y = center.y + 45
                     pyautogui.moveTo(center.x, question_y)
-                    logger.info(f"Moved mouse 45 pixels down to question area: ({center.x}, {question_y})")
                     
                     # Triple-click to select the whole question text
                     pyautogui.tripleClick()
@@ -632,7 +634,6 @@ class TriviaAutomation(AutomationBase):
                     question_text = pyperclip.paste()
                     # Clean up any newline characters at the end
                     question_text = question_text.strip()
-                    logger.info(f"Question text from clipboard: {question_text}")
                     
                     return ActionResult.success_result("Question text extracted", data={
                         'question_position': (center.x, question_y),
@@ -662,38 +663,11 @@ class TriviaAutomation(AutomationBase):
     def _wait_for_chrome_load(self) -> ActionResult:
         """Wait for Chrome to load by looking for Google search icon"""
         try:
-            logger.info("Waiting for Chrome to load by looking for Google search icon...")
-            
-            # Wait for Google search icon to appear
-            max_attempts = 20  # 20 seconds max wait time
-            attempt = 0
-            
-            while attempt < max_attempts:
-                attempt += 1
-                logger.info(f"Attempt {attempt}/{max_attempts} to find Google search icon...")
-                
-                # Look for Google search icon using template matching
-                search_icon_criteria = ElementSearchCriteria(
-                    name="Google Search Icon",
-                    element_type=ElementType.BUTTON,
-                    detection_methods=[DetectionMethod.TEMPLATE],
-                    confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
-                    template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.GOOGLE_SEARCH_ICON)
-                )
-                
-                # Try to find the Google search icon
-                search_icon_element = self.ui_detector.find_element(search_icon_criteria)
-                
-                if search_icon_element:
-                    logger.info(f"Found Google search icon at {search_icon_element.bounding_box} - Chrome loaded")
-                    return ActionResult.success_result("Chrome loaded successfully")
-                else:
-                    logger.info(f"Google search icon not found on attempt {attempt}, waiting 1 second...")
-                    time.sleep(1)
-            
-            logger.warning("Google search icon not found after all attempts - Chrome may not have loaded properly")
-            return ActionResult.failure_result("Chrome did not load within expected time")
-            
+            return self._wait_for_trivia_button(
+                "Google Search Icon",
+                AssetPaths.TriviaTemplates.GOOGLE_SEARCH_ICON,
+                timeout=20.0
+            )
         except Exception as e:
             logger.error(f"Error waiting for Chrome load: {e}")
             return ActionResult.failure_result(f"Failed to wait for Chrome load: {e}", error=e)
@@ -710,7 +684,6 @@ class TriviaAutomation(AutomationBase):
             
             # Try exact match first
             if question_text in questions:
-                logger.info(f"Exact match found for question")
                 return questions[question_text]
             
             # Try partial match (in case of slight differences)
@@ -781,7 +754,6 @@ class TriviaAutomation(AutomationBase):
                 
                 # Move mouse to answer option
                 pyautogui.moveTo(answer_x, answer_y)
-                logger.info(f"Moved mouse to {option_name} answer: ({answer_x}, {answer_y})")
                 
                 # Triple-click to select the answer text
                 pyautogui.tripleClick()
@@ -798,7 +770,6 @@ class TriviaAutomation(AutomationBase):
                 # Move mouse 30 pixels to the left to click the checkbox
                 checkbox_x = answer_x - 30
                 pyautogui.moveTo(checkbox_x, answer_y)
-                logger.info(f"Moved mouse to checkbox position: ({checkbox_x}, {answer_y})")
                 
                 # Click the checkbox
                 pyautogui.click(checkbox_x, answer_y)
@@ -813,18 +784,83 @@ class TriviaAutomation(AutomationBase):
         except Exception as e:
             logger.error(f"Error checking answer options: {e}")
     
+    def _detect_question_wrapping(self, question_position):
+        """Detect if the question text wraps using character width estimation"""
+        try:
+            question_x, question_y = question_position
+            
+            # Get the question text from clipboard (should already be available)
+            question_text = pyperclip.paste().strip()
+            
+            if not question_text:
+                logger.warning("No question text available for width estimation")
+                return True, 0
+            
+            # Character width estimation for Comic Sans font (adjusted for actual font size)
+            # Based on your observation: 76 chars with width 54.7 was way over threshold
+            # This suggests we need much larger width values
+            char_widths = {
+                # Wide characters
+                'W': 2.0, 'M': 2.0, 'Q': 1.8, '@': 1.8,
+                # Medium-wide characters  
+                'A': 1.6, 'B': 1.5, 'D': 1.5, 'G': 1.5, 'O': 1.5, 'P': 1.5, 'R': 1.5, 'U': 1.5, 'V': 1.5, 'Y': 1.5,
+                'C': 1.4, 'E': 1.4, 'F': 1.4, 'H': 1.4, 'J': 1.4, 'K': 1.4, 'L': 1.4, 'N': 1.4, 'S': 1.4, 'T': 1.4, 'X': 1.4, 'Z': 1.4,
+                'I': 0.8, 'l': 0.8,  # Very narrow
+                # Lowercase
+                'w': 1.8, 'm': 1.6, 'q': 1.4, 'a': 1.2, 'b': 1.2, 'd': 1.2, 'g': 1.2, 'o': 1.2, 'p': 1.2,
+                'c': 1.1, 'e': 1.1, 'f': 1.0, 'h': 1.1, 'j': 0.8, 'k': 1.1, 'l': 0.8, 'n': 1.1, 'r': 0.8, 's': 1.0, 't': 1.0, 'u': 1.1, 'v': 1.1, 'x': 1.1, 'y': 1.1, 'z': 1.0,
+                'i': 0.7,  # Very narrow
+                # Numbers
+                '0': 1.4, '1': 0.8, '2': 1.4, '3': 1.4, '4': 1.4, '5': 1.4, '6': 1.4, '7': 1.4, '8': 1.4, '9': 1.4,
+                # Punctuation and symbols
+                ' ': 0.6, '.': 0.6, ',': 0.6, '!': 0.7, '?': 1.4, ':': 0.7, ';': 0.7, "'": 0.5, '"': 0.8,
+                '-': 0.8, '_': 1.1, '=': 1.4, '+': 1.4, '(': 0.8, ')': 0.8, '[': 0.8, ']': 0.8,
+                '&': 1.6, '%': 1.6, '$': 1.4, '#': 1.5, '*': 1.1, '/': 0.8, '\\': 0.8, '|': 0.6,
+                # Default for unknown characters
+                'default': 1.1
+            }
+            
+            # Calculate estimated width
+            estimated_width = 0
+            for char in question_text:
+                if char in char_widths:
+                    estimated_width += char_widths[char]
+                else:
+                    estimated_width += char_widths['default']
+            
+            # Estimate line width threshold (keep original threshold)
+            # You mentioned 69 chars sometimes wraps, 70 chars sometimes doesn't
+            # This suggests the threshold is around 69-70 character widths
+            line_width_threshold = 69.5  # Conservative threshold
+            
+            is_single_line = estimated_width <= line_width_threshold
+            
+            logger.info(f"Question text: '{question_text}' ({len(question_text)} chars)")
+            logger.info(f"Estimated width: {estimated_width:.1f} (threshold: {line_width_threshold})")
+            logger.info(f"Question appears to be {'single line' if is_single_line else 'wrapped'}")
+            
+            return not is_single_line, estimated_width
+            
+        except Exception as e:
+            logger.warning(f"Error in character width estimation: {e}")
+            return True, 0  # Default to wrapped if detection fails
+
     def _find_and_click_correct_answer(self, question_position, correct_answer, question_text):
         """Find the correct answer option and click its checkbox"""
         try:
-            logger.info("Looking for the correct answer option...")
             
             question_x, question_y = question_position
             
-            # Adjust Y positions if question is long (over 68 characters)
+            # Detect if question text wraps using visual detection
+            is_wrapped, text_height = self._detect_question_wrapping(question_position)
+            
+            # Adjust Y positions if question text is wrapped
             y_adjustment = 0
-            if len(question_text) > 68:
+            if is_wrapped:
                 y_adjustment = 30
-                logger.info(f"Question is long ({len(question_text)} chars), adjusting answer positions by {y_adjustment} pixels")
+                logger.info(f"Question text is wrapped (height: {text_height}px), adjusting answer positions by {y_adjustment} pixels")
+            else:
+                logger.info(f"Question text is single line (height: {text_height}px), no Y adjustment needed")
             
             # First, check the first two answers to see if any are long
             first_two_answers_long = False
@@ -897,7 +933,6 @@ class TriviaAutomation(AutomationBase):
                 
                 # Move mouse to answer option
                 pyautogui.moveTo(answer_x, answer_y)
-                logger.info(f"Moved mouse to {option_name} answer: ({answer_x}, {answer_y})")
                 
                 # Triple-click to select the answer text
                 pyautogui.tripleClick()
@@ -920,7 +955,6 @@ class TriviaAutomation(AutomationBase):
                     # Move mouse 30 pixels to the left to click the checkbox
                     checkbox_x = answer_x - 30
                     pyautogui.moveTo(checkbox_x, answer_y)
-                    logger.info(f"Moved mouse to checkbox position: ({checkbox_x}, {answer_y})")
                     
                     # Click the checkbox
                     pyautogui.click(checkbox_x, answer_y)
@@ -1025,33 +1059,12 @@ class TriviaAutomation(AutomationBase):
     def _wait_for_claim_reward_button(self) -> ActionResult:
         """Wait for and click the first claim reward button"""
         try:
-            logger.info("Waiting for claim your reward button to appear...")
-            
-            claim_button_criteria = ElementSearchCriteria(
-                name="Claim Your Reward Button",
-                element_type=ElementType.BUTTON,
-                template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.CLAIM_YOUR_REWARD_BUTTON),
-                confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
-                detection_methods=[DetectionMethod.TEMPLATE]
+            return self._wait_and_click_trivia_button(
+                "Claim Your Reward Button",
+                AssetPaths.TriviaTemplates.CLAIM_YOUR_REWARD_BUTTON,
+                timeout=15.0,
+                post_click_delay=2.0
             )
-            
-            result = self.wait_for_element(claim_button_criteria, timeout=15.0, check_interval=0.5)
-            
-            if result.success:
-                logger.info("Claim your reward button found, clicking it...")
-                click_result = self.find_and_click(claim_button_criteria, wait_time=1.0, retries=2)
-                
-                if click_result.success:
-                    logger.info("Successfully clicked claim your reward button")
-                    time.sleep(2.0)  # Wait for the reward to process
-                    return ActionResult.success_result("First claim reward button clicked successfully")
-                else:
-                    logger.error("Failed to click claim your reward button")
-                    return ActionResult.failure_result("Failed to click claim your reward button")
-            else:
-                logger.warning("Claim your reward button did not appear within timeout period")
-                return ActionResult.failure_result("Claim your reward button not found within timeout")
-                
         except Exception as e:
             logger.error(f"Error waiting for claim reward button: {e}")
             return ActionResult.failure_result(f"Failed to wait for claim reward button: {e}", error=e)
@@ -1059,38 +1072,20 @@ class TriviaAutomation(AutomationBase):
     def _wait_for_second_claim_reward_button(self) -> ActionResult:
         """Wait for and click the second claim reward button"""
         try:
-            logger.info("Waiting for second claim your reward button to appear...")
-            
-            second_claim_button_criteria = ElementSearchCriteria(
-                name="Second Claim Your Reward Button",
-                element_type=ElementType.BUTTON,
-                template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.SECOND_CLAIM_YOUR_REWARD_BUTTON),
-                confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
-                detection_methods=[DetectionMethod.TEMPLATE]
+            result = self._wait_and_click_trivia_button(
+                "Second Claim Your Reward Button",
+                AssetPaths.TriviaTemplates.SECOND_CLAIM_YOUR_REWARD_BUTTON,
+                timeout=15.0,
+                post_click_delay=0.0
             )
             
-            result = self.wait_for_element(second_claim_button_criteria, timeout=15.0, check_interval=0.5)
-            
             if result.success:
-                logger.info("Second claim your reward button found, clicking it...")
-                click_result = self.find_and_click(second_claim_button_criteria, wait_time=1.0, retries=2)
-                
-                if click_result.success:
-                    logger.info("Successfully clicked second claim your reward button")
-                    time.sleep(2.0)  # Wait for the reward to process
-                    
-                    # Now wait for take another quiz button and navigate back
-                    navigation_result = self._wait_for_take_another_quiz_and_navigate_back()
-                    if not navigation_result.success:
-                        logger.warning(f"Navigation back to trivia page failed: {navigation_result.message}")
-                    
-                    return ActionResult.success_result("Second claim reward button clicked successfully")
-                else:
-                    logger.error("Failed to click second claim your reward button")
-                    return ActionResult.failure_result("Failed to click second claim your reward button")
-            else:
-                logger.warning("Second claim your reward button did not appear within timeout period")
-                return ActionResult.failure_result("Second claim your reward button not found within timeout")
+                # Wait for take another quiz button to confirm reward flow is complete
+                wait_result = self._wait_for_take_another_quiz_button()
+                if not wait_result.success:
+                    logger.warning(f"Take another quiz button did not appear: {wait_result.message}")
+            
+            return result
                 
         except Exception as e:
             logger.error(f"Error waiting for second claim reward button: {e}")
@@ -1099,32 +1094,12 @@ class TriviaAutomation(AutomationBase):
     def _wait_for_submit_answer_button(self) -> ActionResult:
         """Wait for submit answer button to appear and click it"""
         try:
-            logger.info("Waiting for submit answer button to appear...")
-            
-            submit_button_criteria = ElementSearchCriteria(
-                name="Submit Answer Button",
-                element_type=ElementType.BUTTON,
-                template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.SUBMIT_ANSWER_BUTTON),
-                confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
-                detection_methods=[DetectionMethod.TEMPLATE]
+            return self._wait_and_click_trivia_button(
+                "Submit Answer Button",
+                AssetPaths.TriviaTemplates.SUBMIT_ANSWER_BUTTON,
+                timeout=10.0,
+                post_click_delay=0.0
             )
-            
-            result = self.wait_for_element(submit_button_criteria, timeout=10.0, check_interval=0.2)
-            
-            if result.success:
-                logger.info("Submit answer button found, clicking it...")
-                click_result = self.find_and_click(submit_button_criteria, wait_time=1.0, retries=2)
-                
-                if click_result.success:
-                    logger.info("Successfully clicked submit answer button")
-                    return ActionResult.success_result("Successfully clicked submit answer button")
-                else:
-                    logger.error("Failed to click submit answer button")
-                    return ActionResult.failure_result("Failed to click submit answer button")
-            else:
-                logger.warning("Submit answer button did not appear within timeout period")
-                return ActionResult.failure_result("Submit answer button not found within timeout")
-                
         except Exception as e:
             logger.error(f"Error waiting for submit answer button: {e}")
             return ActionResult.failure_result(f"Failed to wait for submit answer button: {e}", error=e)
@@ -1132,68 +1107,24 @@ class TriviaAutomation(AutomationBase):
     def _wait_for_trivia_banner_after_submit(self) -> ActionResult:
         """Wait for trivia banner to appear after submitting an answer (2 second timeout)"""
         try:
-            logger.info("Waiting for trivia banner to appear after submit...")
-            
-            # Look for trivia banner using template matching
-            banner_criteria = ElementSearchCriteria(
-                name="Trivia Banner",
-                element_type=ElementType.BUTTON,
-                detection_methods=[DetectionMethod.TEMPLATE],
-                confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
-                template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.TRIVIA_BANNER)
+            return self._wait_for_trivia_button(
+                "Trivia Banner",
+                AssetPaths.TriviaTemplates.TRIVIA_BANNER,
+                timeout=2.0,
+                post_wait_delay=0.5
             )
-            
-            # Wait for trivia banner with 2 second timeout
-            result = self.wait_for_element(banner_criteria, timeout=2.0, check_interval=0.2)
-            
-            if result.success:
-                logger.info("Trivia banner found after submit - more questions available")
-                return ActionResult.success_result("Trivia banner found - more questions available")
-            else:
-                logger.info("Trivia banner not found after submit - trivia completed")
-                return ActionResult.failure_result("Trivia banner not found - trivia completed")
-            
         except Exception as e:
             logger.error(f"Error waiting for trivia banner after submit: {e}")
             return ActionResult.failure_result(f"Failed to wait for trivia banner after submit: {e}", error=e)
     
-    def _wait_for_take_another_quiz_and_navigate_back(self) -> ActionResult:
-        """Wait for take another quiz button to appear and then navigate back to trivia page"""
+    def _wait_for_take_another_quiz_button(self) -> ActionResult:
+        """Wait for take another quiz button to appear to confirm reward flow is complete"""
         try:
-            logger.info("Waiting for take another quiz button to appear...")
-            
-            take_another_quiz_criteria = ElementSearchCriteria(
-                name="Take Another Quiz Button",
-                element_type=ElementType.BUTTON,
-                template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.TAKE_ANOTHER_QUIZ_BUTTON),
-                confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
-                detection_methods=[DetectionMethod.TEMPLATE]
+            return self._wait_for_trivia_button(
+                "Take Another Quiz Button",
+                AssetPaths.TriviaTemplates.TAKE_ANOTHER_QUIZ_BUTTON,
+                timeout=15.0
             )
-            
-            result = self.wait_for_element(take_another_quiz_criteria, timeout=15.0, check_interval=0.5)
-            
-            if result.success:
-                logger.info("Take another quiz button found - navigating back to trivia page...")
-                
-                # Navigate back to the main trivia page
-                navigation_result = self._navigate_to_trivia()
-                if navigation_result.success:
-                    logger.info("Successfully navigated back to main trivia page")
-                    return ActionResult.success_result("Successfully navigated back to main trivia page")
-                else:
-                    logger.error(f"Failed to navigate back to main trivia page: {navigation_result.message}")
-                    return ActionResult.failure_result(f"Failed to navigate back to main trivia page: {navigation_result.message}")
-            else:
-                logger.warning("Take another quiz button did not appear within timeout period")
-                # Still try to navigate back even if button not found
-                logger.info("Attempting to navigate back to main trivia page anyway...")
-                navigation_result = self._navigate_to_trivia()
-                if navigation_result.success:
-                    logger.info("Successfully navigated back to main trivia page")
-                    return ActionResult.success_result("Successfully navigated back to main trivia page")
-                else:
-                    return ActionResult.failure_result("Take another quiz button not found and navigation failed")
-                
         except Exception as e:
             logger.error(f"Error waiting for take another quiz button: {e}")
             return ActionResult.failure_result(f"Failed to wait for take another quiz button: {e}", error=e)

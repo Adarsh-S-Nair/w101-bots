@@ -29,49 +29,47 @@ class GardeningAutomation(AutomationBase):
         """Execute gardening automation workflow"""
         try:
             logger.info("Starting gardening automation")
-            
-            # First, navigate to the main garden area
-            result = self.navigate_to_garden()
-            if not result.success:
-                return result
-            
-            # # Check if elder couch potatoes are ready
-            # result = self.check_couch_potatoes_ready()
-            # if not result.success:
-            #     logger.warning("Failed to check couch potatoes status")
-            #     return ActionResult.failure_result("Failed to check couch potatoes status")
-            
-            # # Guard clause: If not ready, do nothing and return
-            # if not (result.data and result.data.get('couch_potatoes_ready', False)):
-            #     logger.info("Couch potatoes are not ready yet, doing nothing")
-            #     return ActionResult.success_result("Couch potatoes not ready, no action taken")
-            
-            # # At this point, we know couch potatoes are ready - harvest and replant
-            # logger.info("Couch potatoes are ready! Starting harvest and replant cycle...")
-            
-            # # Harvest the couch potatoes
-            # result = self.harvest_couch_potatoes()
-            # if not result.success:
-            #     logger.warning("Harvest failed")
-            #     return ActionResult.failure_result("Harvest failed")
 
-            # # Now replant the couch potatoes
-            # logger.info("Starting replanting process...")
-            # replant_result = self.replant_couch_potatoes()
-            # if not replant_result.success:
-            #     logger.warning("Replanting failed")
-            #     return ActionResult.failure_result("Replanting failed")
-            
-            # After replanting, update plant status
-            logger.info("Replanting completed, updating plant status...")
+            # First, navigate to the main garden area
+            nav_result = self.navigate_to_garden()
+            if not nav_result.success:
+                raise RuntimeError("Failed to navigate to garden area")
+
+            # Check if elder couch potatoes are ready
+            readiness_result = self.check_couch_potatoes_ready()
+            if not readiness_result.success:
+                raise RuntimeError("Failed to check couch potatoes status")
+
+            # couch_potatoes_ready = bool(readiness_result.data and readiness_result.data.get('couch_potatoes_ready', False))
+            # if couch_potatoes_ready:
+            #     # Harvest and replant flow
+            #     logger.info("Couch potatoes are elder and ready! Starting harvest and replant cycle...")
+            #     harvest_result = self.harvest_couch_potatoes()
+            #     if not harvest_result.success:
+            #         raise RuntimeError("Harvest failed")
+
+            #     logger.info("Starting replanting process...")
+            #     replant_result = self.replant_couch_potatoes()
+            #     if not replant_result.success:
+            #         raise RuntimeError("Replanting failed")
+            # else:
+            #     # Not ready: check for needs and handle them if present
+            #     logger.info("Couch potatoes not ready. Checking for plant needs...")
+            #     needs_result = self.check_plant_needs()
+            #     if needs_result.success and needs_result.data and needs_result.data.get('needs_detected', False):
+            #         logger.info("Plant needs detected! Handling needs...")
+            #         handle_result = self.handle_plant_needs()
+            #     else:
+            #         logger.info("No plant needs detected")
+
+            # Update plant status only after successful navigation/workflow
+            logger.info("Updating plant status at end of gardening run...")
             status_result = self.update_plant_status()
             if not status_result.success:
-                logger.warning("Failed to update plant status")
-                return ActionResult.failure_result("Failed to update plant status")
-            
+                logger.warning("Plant status update encountered an issue at end of run")
+
             logger.info("Gardening automation completed successfully")
             return ActionResult.success_result("Gardening automation completed successfully")
-            
         except Exception as e:
             return ActionResult.failure_result("Gardening automation failed", error=e)
     
@@ -125,6 +123,225 @@ class GardeningAutomation(AutomationBase):
             logger.error(f"Failed to check couch potatoes status: {e}")
             return ActionResult.failure_result("Failed to check couch potatoes status", error=e)
     
+    def check_plant_needs(self) -> ActionResult:
+        """Check if plants have needs that require attention"""
+        try:
+            logger.info("Checking if plants have needs...")
+            
+            # Define search criteria for plants have needs indicator
+            needs_criteria = ElementSearchCriteria(
+                name="plants_have_needs",
+                element_type=ElementType.IMAGE,
+                template_path=config.get_gardening_template_path(AssetPaths.GardeningTemplates.PLANTS_HAVE_NEEDS),
+                confidence_threshold=0.8,
+                detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
+                metadata={"description": "Plants have needs indicator"}
+            )
+            
+            # Check if plants have needs image is present
+            if self.ui_detector.is_element_present(needs_criteria):
+                logger.info("Plants have needs detected!")
+                return ActionResult.success_result("Plants have needs detected", data={'needs_detected': True})
+            else:
+                logger.info("No plant needs detected")
+                return ActionResult.success_result("No plant needs detected", data={'needs_detected': False})
+                
+        except Exception as e:
+            logger.error(f"Failed to check plant needs: {e}")
+            return ActionResult.failure_result("Failed to check plant needs", error=e)
+    
+    def handle_plant_needs(self) -> ActionResult:
+        """Handle plant needs based on configured plot plant type and plant database steps.
+        This opens the gardening menu, selects the category, then selects the spell, and returns without casting.
+        """
+        try:
+            # Determine plant type from garden config
+            plot_plant_type = (self.garden_config or {}).get('plot_plant_type')
+            if not plot_plant_type:
+                logger.warning("plot_plant_type not set in garden_config.yaml")
+                return ActionResult.failure_result("plot_plant_type not set in garden_config.yaml")
+
+            # Use the lowercase key directly (must match plant_database keys)
+            plant_key = str(plot_plant_type).strip()
+
+            # Load plant database
+            with open('plant_database.yaml', 'r', encoding='utf-8') as file:
+                plant_db = yaml.safe_load(file) or {}
+            plant_data = (plant_db.get('plants') or {}).get(plant_key)
+            if not plant_data:
+                logger.warning(f"Plant '{plant_key}' not found in plant_database.yaml")
+                return ActionResult.failure_result(f"Plant '{plant_key}' not found in plant_database.yaml")
+
+            needs = ((plant_data.get('needs_handling') or {}).get('steps')) or []
+            if not needs:
+                logger.info("No needs_handling steps configured for this plant")
+                return ActionResult.success_result("No needs to handle")
+
+            # Execute each needs step in sequence
+            for index, step in enumerate(needs):
+                is_last_step = index == (len(needs) - 1)
+
+                # Open the gardening menu at the beginning of each step
+                open_result = self._open_gardening_menu()
+                if not open_result.success:
+                    return open_result
+
+                category_const = step.get('category')
+                spell_const = step.get('spell')
+                if not category_const or not spell_const:
+                    return ActionResult.failure_result("Invalid needs_handling step; missing category or spell")
+
+                # Resolve constants to template filenames in AssetPaths.GardeningTemplates
+                category_filename = getattr(AssetPaths.GardeningTemplates, category_const, None)
+                spell_filename = getattr(AssetPaths.GardeningTemplates, spell_const, None)
+                if not category_filename or not spell_filename:
+                    return ActionResult.failure_result("Category or spell constant not found in AssetPaths.GardeningTemplates")
+
+                # Find and click the category
+                select_category_result = self._select_gardening_category(category_const, category_filename)
+                if not select_category_result.success:
+                    return select_category_result
+
+                # Reset mouse after category click to avoid tooltip
+                self._reset_mouse_after_category_click()
+
+                # Find and click the spell with pagination
+                select_spell_result = self._select_spell_with_pagination(spell_const, spell_filename)
+                if not select_spell_result.success:
+                    return select_spell_result
+
+                # Move mouse to configured coordinates and wait (for testing)
+                self._position_mouse_for_spell_casting()
+
+                # If not the last step, navigate back to the front of the house and then back to garden
+                if not is_last_step:
+                    logger.info("Step completed. Navigating back to the front of the house and then back to garden before next step...")
+                    nav_result = self._navigate_house_front_and_back_to_garden()
+                    if not nav_result.success:
+                        return nav_result
+
+            logger.info("All needs steps processed. Stopping here (not casting yet).")
+            return ActionResult.success_result("All needs steps processed")
+
+        except Exception as e:
+            logger.error(f"Failed to handle plant needs: {e}")
+            return ActionResult.failure_result("Failed to handle plant needs", error=e)
+
+    def _open_gardening_menu(self) -> ActionResult:
+        """Open the gardening menu by pressing 'g' and waiting briefly."""
+        try:
+            logger.info("Opening gardening menu to handle needs...")
+            pyautogui.press('g')
+            time.sleep(1.0)
+            return ActionResult.success_result("Gardening menu opened")
+        except Exception as e:
+            logger.error(f"Failed to open gardening menu: {e}")
+            return ActionResult.failure_result("Failed to open gardening menu", error=e)
+
+    def _select_gardening_category(self, category_const: str, category_filename: str) -> ActionResult:
+        """Find and click a gardening category by constant/filename."""
+        try:
+            logger.info(f"Selecting category '{category_const}'...")
+            category_criteria = ElementSearchCriteria(
+                name=f"{category_const.lower()}",
+                element_type=ElementType.IMAGE,
+                template_path=config.get_gardening_template_path(category_filename),
+                confidence_threshold=0.8,
+                detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
+                metadata={"description": f"Category {category_const}"}
+            )
+            category_element = self.ui_detector.find_element(category_criteria)
+            if not category_element:
+                return ActionResult.failure_result(f"Category '{category_const}' not found on screen")
+            click_result = self.click_element(category_element)
+            if not click_result.success:
+                return ActionResult.failure_result(f"Failed to click category '{category_const}'")
+            time.sleep(1.0)
+            return ActionResult.success_result("Category selected")
+        except Exception as e:
+            logger.error(f"Failed to select gardening category: {e}")
+            return ActionResult.failure_result("Failed to select gardening category", error=e)
+
+    def _reset_mouse_after_category_click(self):
+        """Move mouse up to avoid tooltip/context bubble obstructing spells."""
+        try:
+            current_x, current_y = pyautogui.position()
+            target_y = max(0, current_y - 100)
+            logger.info(f"Resetting mouse to avoid tooltip: moving from ({current_x}, {current_y}) to ({current_x}, {target_y})")
+            pyautogui.moveTo(current_x, target_y)
+            time.sleep(0.3)
+        except Exception as move_err:
+            logger.warning(f"Failed to reposition mouse after category click: {move_err}")
+
+    def _select_spell_with_pagination(self, spell_const: str, spell_filename: str) -> ActionResult:
+        """Find and click the spell. If not present, paginate right until found or no more pages."""
+        try:
+            logger.info(f"Selecting spell '{spell_const}' with pagination if needed...")
+            arrow_criteria = ElementSearchCriteria(
+                name="gardening_menu_right_arrow",
+                element_type=ElementType.IMAGE,
+                template_path=config.get_gardening_template_path(AssetPaths.GardeningTemplates.GARDENING_MENU_RIGHT_ARROW),
+                confidence_threshold=0.8,
+                detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
+                metadata={"description": "Gardening menu right arrow for pagination"}
+            )
+
+            while True:
+                spell_criteria = ElementSearchCriteria(
+                    name=f"{spell_const.lower()}",
+                    element_type=ElementType.IMAGE,
+                    template_path=config.get_gardening_template_path(spell_filename),
+                    confidence_threshold=0.8,
+                    detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
+                    metadata={"description": f"Spell {spell_const}"}
+                )
+                spell_element = self.ui_detector.find_element(spell_criteria)
+                if spell_element:
+                    click_result = self.click_element(spell_element)
+                    if not click_result.success:
+                        return ActionResult.failure_result(f"Failed to click spell '{spell_const}'")
+                    return ActionResult.success_result("Spell selected")
+
+                # Not found; check if there's a next page
+                right_arrow = self.ui_detector.find_element(arrow_criteria)
+                if not right_arrow:
+                    return ActionResult.failure_result(f"Spell '{spell_const}' not found and no more pages available")
+
+                # Click the right arrow to go to the next page
+                logger.info("Spell not found on this page. Clicking right arrow to paginate...")
+                arrow_click = self.click_element(right_arrow)
+                if not arrow_click.success:
+                    return ActionResult.failure_result("Failed to click gardening menu right arrow")
+                time.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Failed during spell selection: {e}")
+            return ActionResult.failure_result("Failed during spell selection", error=e)
+
+    def _position_mouse_for_spell_casting(self):
+        """Move mouse to configured coordinates, click to cast, then wait for post-cast lag."""
+        try:
+            spell_config = self.garden_config.get('spell_casting', {})
+            target_x = spell_config.get('target_x', 960)  # Default to center
+            target_y = spell_config.get('target_y', 540)  # Default to center
+            wait_time = spell_config.get('wait_after_positioning', 60)
+            wait_after_cast = spell_config.get('wait_after_casting', 50)
+            
+            logger.info(f"Moving mouse naturally to spell casting position at ({target_x}, {target_y}) and waiting {wait_time} seconds before casting...")
+            # Move mouse naturally over 1 second instead of teleporting
+            pyautogui.moveTo(target_x, target_y, duration=5.0)
+            time.sleep(wait_time)
+            
+            # Click to cast the spell
+            logger.info("Casting spell with left click...")
+            pyautogui.click(button='left')
+            
+            # Wait after casting to allow for game lag/animation
+            logger.info(f"Waiting {wait_after_cast} seconds after casting to allow for animations/lag...")
+            time.sleep(wait_after_cast)
+            logger.info("Finished post-cast wait")
+        except Exception as e:
+            logger.warning(f"Failed to position mouse for spell casting: {e}")
+
     def _load_garden_config(self) -> dict:
         """Load garden configuration from garden_config.yaml"""
         try:
@@ -758,14 +975,31 @@ class GardeningAutomation(AutomationBase):
         text_upper = text.upper()
         
         # Look for progress indicators - handle OCR misreading issues
-        # OCR sometimes reads "PROGRESS" as "$" or other characters
-        if 'PROGRESS TO YOUNG:' in text_upper or 'TO YOUNG:' in text_upper:
+        # OCR sometimes reads "PROGRESS" as "STOELLR", "PROGRESS TO" as "STOELLR:", etc.
+        # Also handle "TIME TO HARVEST" vs "TIL HARVEST"
+        
+        # Check for various OCR misreadings of "PROGRESS TO YOUNG:"
+        if any(pattern in text_upper for pattern in [
+            'PROGRESS TO YOUNG:', 'TO YOUNG:', 'STOELLR: YOUNG', 'STOELLR YOUNG',
+            'PROGRESS YOUNG:', 'PROGRESS YOUNG'
+        ]):
             return 'seedling'
-        elif 'PROGRESS TO MATURE:' in text_upper or 'TO MATURE:' in text_upper:
+        # Check for various OCR misreadings of "PROGRESS TO MATURE:"
+        elif any(pattern in text_upper for pattern in [
+            'PROGRESS TO MATURE:', 'TO MATURE:', 'STOELLR: MATURE', 'STOELLR MATURE',
+            'PROGRESS MATURE:', 'PROGRESS MATURE'
+        ]):
             return 'young'
-        elif 'PROGRESS TO ELDER:' in text_upper or 'TO ELDER:' in text_upper:
+        # Check for various OCR misreadings of "PROGRESS TO ELDER:"
+        elif any(pattern in text_upper for pattern in [
+            'PROGRESS TO ELDER:', 'TO ELDER:', 'STOELLR: ELDER', 'STOELLR ELDER',
+            'PROGRESS ELDER:', 'PROGRESS ELDER', 'STOELLR: Cj'  # This matches your OCR output
+        ]):
             return 'mature'
-        elif 'ELDER' in text_upper and ('PROGRESS' not in text_upper and 'TO ' not in text_upper):
+        # Check if already elder (no progress indicators)
+        elif 'ELDER' in text_upper and not any(pattern in text_upper for pattern in [
+            'PROGRESS', 'STOELLR', 'TO YOUNG', 'TO MATURE', 'TO ELDER'
+        ]):
             return 'elder'
         
         return None

@@ -72,11 +72,14 @@ class AssetPaths:
         PLANT_ALL = "plant_all.png"
         PLANTED_COUCH_POTATO = "planted_couch_potato.png"
         CONFIRM_PLANT_ALL = "confirm_plant_all.png"
+        PLANTS_HAVE_NEEDS = "plants_have_needs.png"
+        GROWING_SPELLS = "growing_spells.png"
+        PEST_SPELLS = "pest_spells.png"
+        DOWNPOUR = "downpour.png"
+        FLUTE_ENSEMBLE = "flute_ensemble.png"
+        GUSTY_WINDS = "gusty_winds.png"
+        GARDENING_MENU_RIGHT_ARROW = "gardening_menu_right_arrow.png"
         # Add more gardening templates here as needed
-        # Examples:
-        # GARDEN_BUTTON = "garden_button.png"
-        # HARVEST_BUTTON = "harvest_button.png"
-        # PLANT_BUTTON = "plant_button.png"
     
     class TriviaTemplates:
         """Trivia-specific template files"""
@@ -96,6 +99,7 @@ class AssetPaths:
         
         # Question interface
         QUESTION_TEXT = "question_text.png"
+        SINGLE_LINE_QUESTION = "single_line_question.png"
         ANSWER_OPTION_A = "answer_option_a.png"
         ANSWER_OPTION_B = "answer_option_b.png"
         ANSWER_OPTION_C = "answer_option_c.png"
