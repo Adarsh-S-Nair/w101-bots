@@ -828,10 +828,11 @@ class TriviaAutomation(AutomationBase):
                 else:
                     estimated_width += char_widths['default']
             
-            # Estimate line width threshold (keep original threshold)
-            # You mentioned 69 chars sometimes wraps, 70 chars sometimes doesn't
-            # This suggests the threshold is around 69-70 character widths
-            line_width_threshold = 69.5  # Conservative threshold
+            # Estimate line width threshold (adjusted based on observed behavior)
+            # Single line: "What major engineering project did Marleybone attempt in Cool Ranch?" (71.3 width)
+            # Wrapped: "The Temple in Stymphalos was dedicated to which one of the Immortals?" (72.8 width)
+            # Threshold set between these two cases for accurate classification
+            line_width_threshold = 72.0  # Optimal threshold between single-line and wrapped cases
             
             is_single_line = estimated_width <= line_width_threshold
             

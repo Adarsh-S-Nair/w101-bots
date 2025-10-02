@@ -109,6 +109,11 @@ fi
 # Run the bot
 echo "🚀 Starting Wizard101 $BOT_TYPE Bot..."
 echo "=========================================="
-python main.py --type "$BOT_TYPE"
+python main.py --type "$BOT_TYPE" &
+BOT_PID=$!
+echo "📋 Bot PID: $BOT_PID"
+
+# Wait for the bot process to complete
+wait $BOT_PID
 
 echo "👋 Bot session ended"

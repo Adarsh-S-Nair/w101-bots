@@ -22,10 +22,10 @@ class ColoredFormatter(logging.Formatter):
     }
     
     def format(self, record):
-        # Add color to the level name
+        # Apply color to the entire message based on log level
         levelname = record.levelname
         if levelname in self.COLORS:
-            record.levelname = f"{self.COLORS[levelname]}{levelname}{Style.RESET_ALL}"
+            record.msg = f"{self.COLORS[levelname]}{record.msg}{Style.RESET_ALL}"
         
         return super().format(record)
 
@@ -46,11 +46,10 @@ def setup_logger(name: str = "w101_bot", level: int = logging.INFO) -> logging.L
     
     # Create formatters
     file_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        '%(message)s'
     )
     console_formatter = ColoredFormatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%H:%M:%S'
+        '%(message)s'
     )
     
     # File handler

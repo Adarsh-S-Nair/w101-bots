@@ -3,6 +3,7 @@ Wizard101 Modular Bot - Main Entry Point
 Supports different automation types: gardening, fishing, pvp, etc.
 """
 import sys
+import os
 import argparse
 from pathlib import Path
 
@@ -14,6 +15,10 @@ from src.utils.logger import logger
 
 def main():
     """Main function to run the bot"""
+    # Log the process ID
+    pid = os.getpid()
+    logger.info(f"Bot started with PID: {pid}")
+    
     parser = argparse.ArgumentParser(description="Wizard101 Modular Bot")
     parser.add_argument(
         "--type", 
