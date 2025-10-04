@@ -9,9 +9,9 @@ spell_casting:
   target_x: 1750    # Center of screen horizontally
   target_y: 530    # Center of screen vertically
   # Time to wait after moving mouse (in seconds) - for testing purposes
-  wait_after_positioning: 10
+  wait_after_positioning: 3
   # Time to wait after casting a spell (in seconds) - allow for game lag
-  wait_after_casting: 40
+  wait_after_casting: 20
 
 # Movement pattern to get to your garden
 go_to_garden:

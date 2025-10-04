@@ -14,7 +14,7 @@ load_dotenv()
 class Config:
     """Configuration class for the bot"""
     
-    def __init__(self, config_file: str = "config.yaml"):
+    def __init__(self, config_file: str = "config/config.yaml"):
         self.config_file = config_file
         self._config_data = self._load_config()
         
@@ -116,6 +116,11 @@ class Config:
         return self.TEMPLATES_DIR / AssetPaths.TRIVIA_TEMPLATES
     
     @property
+    def FARMING_TEMPLATES_DIR(self) -> Path:
+        """Get farming templates directory path"""
+        return self.TEMPLATES_DIR / AssetPaths.FARMING_TEMPLATES
+    
+    @property
     def DEBUG_MODE(self) -> bool:
         return self._config_data['bot']['debug_mode']
     
@@ -198,6 +203,10 @@ class Config:
     def get_trivia_template_path(self, filename: str) -> str:
         """Get full path for a trivia template file"""
         return str(self.TRIVIA_TEMPLATES_DIR / filename)
+    
+    def get_farming_template_path(self, filename: str) -> str:
+        """Get full path for a farming template file"""
+        return str(self.FARMING_TEMPLATES_DIR / filename)
 
 # Create a global config instance
 config = Config()

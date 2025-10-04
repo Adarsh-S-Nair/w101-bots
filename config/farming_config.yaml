@@ -1,0 +1,41 @@
+# Farming Configuration for Wizard101 Bot
+# This file controls farming-specific automation settings
+
+# Detection settings
+detection:
+  confidence_threshold: 0.8
+  check_interval: 0.1
+
+# Enemy configurations
+# Each enemy has a template reference that corresponds to constants in AssetPaths.FarmingTemplates
+enemies:
+  troubled_warrior:
+    name: "Troubled Warrior"
+    template: "TROUBLED_WARRIOR"
+    strategy:
+      rounds:
+        - round: 1
+          enchantments:
+            - enchant: "EPIC"
+              card: "METEOR_STRIKE"
+          cast:
+            card: "ENCHANTED_METEOR_STRIKE"
+            target: 0
+    # Add more enemy-specific settings here as needed
+    # e.g., health_threshold, preferred_spells, etc.
+
+# Farming behavior settings
+farming:
+  # Whether to auto-fight detected enemies
+  auto_fight: false
+  
+  # Whether to flee if health is low
+  flee_on_low_health: true
+  
+  # Health threshold for fleeing (percentage)
+  flee_health_threshold: 25
+
+# World navigation settings (for future use)
+world_navigation:
+  target_world: "grizzleheim"
+  # Add more navigation settings here as needed

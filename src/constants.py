@@ -32,6 +32,7 @@ class AssetPaths:
     GAME_TEMPLATES = "game"
     GARDENING_TEMPLATES = "gardening"
     TRIVIA_TEMPLATES = "trivia"
+    FARMING_TEMPLATES = "farming"
     
     # Specific template files
     class LauncherTemplates:
@@ -52,6 +53,7 @@ class AssetPaths:
         HOUSING_NAV = "housing_nav.png"
         CASTLES = "castles.png"
         RED_BARN_FARM = "red_barn_farm.png"
+        WYSTERIA_VILLA = "wysteria_villa.png"
         EQUIP = "equip.png"
         UNEQUIP = "unequip.png"
         GO_HOME = "go_home.png"
@@ -60,6 +62,10 @@ class AssetPaths:
         PLACE_OBJECT = "place_object.png"
         HOUSE_START = "house_start.png"
         OUTSIDE_BUTTON = "outside_button.png"
+        SPIRAL_MAP = "spiral_map.png"
+        SPIRAL_MAP_RIGHT_ARROW = "spiral_map_right_arrow.png"
+        GO_TO_WORLD = "go_to_world.png"
+        GRIZZLEHEIM = "grizzleheim.png"
         # Add more game templates here as needed
     
     class GardeningTemplates:
@@ -79,6 +85,15 @@ class AssetPaths:
         FLUTE_ENSEMBLE = "flute_ensemble.png"
         GUSTY_WINDS = "gusty_winds.png"
         GARDENING_MENU_RIGHT_ARROW = "gardening_menu_right_arrow.png"
+        
+        # Plant likes/modifiers templates
+        LIKES_GARDEN_GNOMES = "likes_garden_gnomes.png"
+        LIKES_KING_PARSLEY = "likes_king_parsley.png"
+        LIKES_LITTER = "likes_litter.png"
+        LIKES_PIXIE = "likes_pixie.png"
+        LIKES_SANDWICH_STATION = "likes_sandwich_station.png"
+        LIKES_THIS_HOUSE = "likes_this_house.png"
+        
         # Add more gardening templates here as needed
     
     class TriviaTemplates:
@@ -124,6 +139,22 @@ class AssetPaths:
         
         # Add more trivia templates here as needed
     
+    class FarmingTemplates:
+        """Farming-specific template files"""
+        FIRST_ENEMY = "first_enemy.png"
+        SECOND_ENEMY = "second_enemy.png"
+        TROUBLED_WARRIOR = "troubled_warrior.png"
+        FIRST_PLAYER = "first_player.png"
+        
+        # Card templates
+        EPIC = "epic.png"
+        METEOR_STRIKE = "meteor_strike.png"
+        ENCHANTED_METEOR_STRIKE = "enchanted_meteor_strike.png"
+        
+        # Battle UI templates
+        PASS = "pass.png"
+        # Add more farming templates here as needed
+    
     @classmethod
     def get_launcher_template_path(cls, filename: str) -> str:
         """Get full path for a launcher template file"""
@@ -143,6 +174,11 @@ class AssetPaths:
     def get_trivia_template_path(cls, filename: str) -> str:
         """Get full path for a trivia template file"""
         return f"{cls.TEMPLATES_BASE}/{cls.TRIVIA_TEMPLATES}/{filename}"
+    
+    @classmethod
+    def get_farming_template_path(cls, filename: str) -> str:
+        """Get full path for a farming template file"""
+        return f"{cls.TEMPLATES_BASE}/{cls.FARMING_TEMPLATES}/{filename}"
 
 # Automation constants
 class AutomationConstants:
@@ -165,6 +201,35 @@ class AutomationConstants:
     DEFAULT_CHECK_INTERVAL = 2.0
     GAME_LOAD_CHECK_INTERVAL = 5.0
     TRIVIA_CHECK_INTERVAL = 1.0  # Faster checks for trivia interactions
+
+# World constants
+class WorldConstants:
+    """Constants for world names and navigation"""
+    
+    # Available worlds
+    GRIZZLEHEIM = "grizzleheim"
+    WIZARD_CITY = "wizard_city"
+    KROKOTOPIA = "krokotopia"
+    MARLEYBONE = "marleybone"
+    MOOSHU = "mooshu"
+    DRAGONSPYRE = "dragonspyre"
+    CELESTIA = "celestia"
+    ZAFARIA = "zafaria"
+    AVALON = "avalon"
+    AZTECA = "azteca"
+    KHYSALIS = "khysalis"
+    POLARIS = "polaris"
+    MIRAGE = "mirage"
+    EMPYREA = "empyrea"
+    KARAMELLE = "karamelle"
+    LEMURIA = "lemuria"
+    NOVUS = "novus"
+    
+    # World template mapping
+    WORLD_TEMPLATES = {
+        GRIZZLEHEIM: "grizzleheim.png",
+        # Add more world templates as they become available
+    }
 
 # Element types for UI detection
 class ElementTypes:

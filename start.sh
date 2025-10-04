@@ -17,9 +17,13 @@ while [[ $# -gt 0 ]]; do
             BOT_TYPE="trivia"
             shift
             ;;
+        --farming)
+            BOT_TYPE="farming"
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--gardening|--trivia]"
+            echo "Usage: $0 [--gardening|--trivia|--farming]"
             exit 1
             ;;
     esac
@@ -89,8 +93,9 @@ if [ -z "$BOT_TYPE" ]; then
     echo "=================="
     echo "1) Gardening Bot"
     echo "2) Trivia Bot"
+    echo "3) Farming Bot"
     echo ""
-    read -p "Enter your choice (1-2): " choice
+    read -p "Enter your choice (1-3): " choice
     
     case $choice in
         1)
@@ -98,6 +103,9 @@ if [ -z "$BOT_TYPE" ]; then
             ;;
         2)
             BOT_TYPE="trivia"
+            ;;
+        3)
+            BOT_TYPE="farming"
             ;;
         *)
             echo "❌ Invalid choice. Exiting..."

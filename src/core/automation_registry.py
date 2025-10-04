@@ -27,13 +27,26 @@ class AutomationRegistry:
         modules = []
         for module_class in self.registered_automations[automation_type]:
             try:
-                module = module_class(self.ui_detector)
+                # Handle HousingNavigationAutomation with house type parameter
+                if module_class.__name__ == "HousingNavigationAutomation":
+                    house_type = self._get_house_type_for_automation(automation_type)
+                    module = module_class(self.ui_detector, house_type=house_type)
+                else:
+                    module = module_class(self.ui_detector)
                 modules.append(module)
             except Exception as e:
                 logger.error(f"Failed to instantiate module {module_class.__name__}: {e}")
                 raise
         
         return modules
+    
+    def _get_house_type_for_automation(self, automation_type: str) -> str:
+        """Get the appropriate house type for the automation type"""
+        house_mapping = {
+            "gardening": "red_barn_farm",
+            "farming": "wysteria_villa"
+        }
+        return house_mapping.get(automation_type, "red_barn_farm")
     
     def get_available_automation_types(self) -> List[str]:
         """Get list of available automation types"""

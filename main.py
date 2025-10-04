@@ -13,6 +13,15 @@ sys.path.append(str(Path(__file__).parent / "src"))
 from src.core.modular_bot import ModularBot
 from src.utils.logger import logger
 
+def safe_input(prompt="Press Enter to exit..."):
+    """Safely handle input with fallback for non-interactive environments"""
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        # Handle cases where stdin is not available or user interrupts
+        print()  # Add a newline for clean output
+        return None
+
 def main():
     """Main function to run the bot"""
     # Log the process ID
@@ -23,7 +32,7 @@ def main():
     parser.add_argument(
         "--type", 
         default="gardening",
-        choices=["gardening", "trivia"],  # Add more types as they're implemented
+        choices=["gardening", "trivia", "farming"],  # Add more types as they're implemented
         help="Type of automation to run (default: gardening)"
     )
     parser.add_argument(
@@ -71,13 +80,13 @@ def main():
         
         if result.success:
             logger.info("Bot execution completed successfully!")
-            input("Press Enter to exit...")
+            safe_input("Press Enter to exit...")
             return 0
         else:
             logger.error(f"Bot execution failed: {result.message}")
             if result.error:
                 logger.error(f"Error details: {result.error}")
-            input("Press Enter to exit...")
+            safe_input("Press Enter to exit...")
             return 1
         
     except KeyboardInterrupt:
@@ -85,7 +94,7 @@ def main():
         return 0
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        input("Press Enter to exit...")
+        safe_input("Press Enter to exit...")
         return 1
 
 if __name__ == "__main__":

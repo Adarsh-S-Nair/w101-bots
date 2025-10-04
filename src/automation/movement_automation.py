@@ -17,17 +17,20 @@ from config import config
 class MovementAutomation(AutomationBase):
     """Handles player movement and navigation based on garden configuration"""
     
-    def __init__(self, ui_detector):
+    def __init__(self, ui_detector, config=None):
         super().__init__(ui_detector)
         self.garden_config = None
-        self.load_garden_config()
+        if config:
+            self.garden_config = config
+        else:
+            self.load_garden_config()
     
     def load_garden_config(self) -> bool:
         """Load garden configuration from YAML file"""
         try:
-            config_path = Path("garden_config.yaml")
+            config_path = Path("config/garden_config.yaml")
             if not config_path.exists():
-                logger.error("Garden configuration file not found: garden_config.yaml")
+                logger.error("Garden configuration file not found: config/garden_config.yaml")
                 return False
             
             with open(config_path, 'r') as file:
@@ -99,7 +102,7 @@ class MovementAutomation(AutomationBase):
                     return ActionResult.failure_result(f"Pattern command failed: {command}")
                 
                 # Small delay between commands
-                time.sleep(0.2)
+                time.sleep(0.1)
             
             logger.info(f"Pattern '{pattern_name}' executed successfully")
             return ActionResult.success_result(f"Pattern '{pattern_name}' executed successfully")

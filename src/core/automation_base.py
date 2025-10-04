@@ -24,7 +24,7 @@ class AutomationBase(ABC):
         """Find an element and click on it with retries"""
         for attempt in range(retries + 1):
             try:
-                logger.info(f"Attempting to find and click '{criteria.name}' (attempt {attempt + 1}/{retries + 1})")
+                logger.debug(f"Attempting to find and click '{criteria.name}' (attempt {attempt + 1}/{retries + 1})")
                 
                 # Find the element
                 element = self.ui_detector.find_element(criteria)
@@ -138,7 +138,7 @@ class AutomationBase(ABC):
     def click_element(self, element: UIElement) -> ActionResult:
         """Click on a UI element"""
         try:
-            logger.info(f"Clicking on '{element.name}' at {element.center}")
+            logger.debug(f"Clicking on '{element.name}' at {element.center}")
             logger.debug(f"Element bounding box: {element.bounding_box}")
             logger.debug(f"Detection method: {element.detection_method}")
             logger.debug(f"Confidence: {element.confidence:.3f}")

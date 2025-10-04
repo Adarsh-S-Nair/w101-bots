@@ -13,6 +13,7 @@ from src.core.action_result import ActionResult
 from src.core.element import ElementSearchCriteria, ElementType, DetectionMethod
 from src.utils.logger import logger
 from src.utils.screenshot import ScreenshotManager
+from src.utils.bot_execution_tracker import TriviaBotTracker
 from config import config
 from src.constants import AssetPaths, AutomationConstants
 
@@ -33,6 +34,23 @@ class TriviaAutomation(AutomationBase):
         self.name = "Trivia Automation"
         self.screenshot_manager = ScreenshotManager()
         self.trivia_database = self._load_trivia_database()
+        self.execution_tracker = TriviaBotTracker()
+    
+    def is_time_to_run(self) -> bool:
+        """Check if it's time to run the trivia bot based on the 22-hour schedule"""
+        return self.execution_tracker.is_time_to_run()
+    
+    def get_next_run_time(self):
+        """Get the next scheduled run time for the trivia bot"""
+        return self.execution_tracker.get_next_run_time()
+    
+    def get_execution_stats(self):
+        """Get trivia bot execution statistics"""
+        return self.execution_tracker.get_execution_stats()
+    
+    def get_execution_history(self, limit: int = 10):
+        """Get recent trivia bot execution history"""
+        return self.execution_tracker.get_execution_history(limit)
     
     def _create_trivia_button_criteria(self, button_name: str, template_filename: str) -> ElementSearchCriteria:
         """Helper to create ElementSearchCriteria for a trivia button template"""
@@ -45,11 +63,22 @@ class TriviaAutomation(AutomationBase):
         )
     
     def _wait_and_click_trivia_button(self, button_name: str, template_filename: str, 
-                                      timeout: float = 15.0, post_click_delay: float = 1.0) -> ActionResult:
+                                      timeout: float = 15.0, post_click_delay: float = 1.0, 
+                                      confidence_threshold: float = None) -> ActionResult:
         """Helper to wait for a trivia button to appear and click it"""
         logger.info(f"Waiting for {button_name} to appear...")
         
-        criteria = self._create_trivia_button_criteria(button_name, template_filename)
+        # Use custom confidence threshold if provided, otherwise use default
+        if confidence_threshold is not None:
+            criteria = ElementSearchCriteria(
+                name=button_name,
+                element_type=ElementType.BUTTON,
+                template_path=config.get_trivia_template_path(template_filename),
+                confidence_threshold=confidence_threshold,
+                detection_methods=[DetectionMethod.TEMPLATE]
+            )
+        else:
+            criteria = self._create_trivia_button_criteria(button_name, template_filename)
         result = self.wait_for_element(criteria, timeout=timeout, check_interval=0.5)
         
         if result.success:
@@ -86,6 +115,10 @@ class TriviaAutomation(AutomationBase):
     
     def execute(self) -> ActionResult:
         """Execute trivia automation workflow"""
+        # Start tracking execution
+        execution_data = self.execution_tracker.start_execution()
+        execution_id = execution_data["execution_id"]
+        
         try:
             logger.info("Starting Trivia Automation...")
             
@@ -138,10 +171,35 @@ class TriviaAutomation(AutomationBase):
                 time.sleep(2.0)
             
             logger.info(f"Trivia automation completed successfully. Total trivias completed: {len(completed_trivias)}")
+            
+            # Complete execution tracking with success
+            completion_info = self.execution_tracker.complete_execution(
+                execution_id=execution_id,
+                success=True,
+                trivia_count=len(completed_trivias),
+                execution_summary={
+                    "attempts_made": attempt,
+                    "skipped_trivias": len(skipped_trivias),
+                    "completed_trivias_list": list(completed_trivias)
+                }
+            )
+            
             return ActionResult.success_result(f"Trivia automation completed successfully. Total trivias completed: {len(completed_trivias)}")
             
         except Exception as e:
             logger.error(f"Error in trivia automation: {e}")
+            
+            # Complete execution tracking with failure
+            self.execution_tracker.complete_execution(
+                execution_id=execution_id,
+                success=False,
+                trivia_count=len(completed_trivias) if 'completed_trivias' in locals() else 0,
+                execution_summary={
+                    "error": str(e),
+                    "attempts_made": attempt if 'attempt' in locals() else 0
+                }
+            )
+            
             return ActionResult.failure_result(f"Trivia automation failed: {e}", error=e)
     
     def _open_chrome(self) -> ActionResult:
@@ -435,7 +493,7 @@ class TriviaAutomation(AutomationBase):
     def _load_trivia_database(self) -> dict:
         """Load trivia database from YAML file"""
         try:
-            trivia_db_path = "trivia_database.yaml"
+            trivia_db_path = "config/trivia_database.yaml"
             if not os.path.exists(trivia_db_path):
                 logger.warning(f"Trivia database file not found: {trivia_db_path}")
                 return {}
@@ -534,39 +592,39 @@ class TriviaAutomation(AutomationBase):
                 
                 # Match question to answer in database
                 answer = self._find_answer_for_question(trivia_name, question_text)
-                if answer:
-                    logger.info(f"Answer: {answer}")
-                    
-                    # Find and click the correct answer option
-                    question_position = result.data.get('question_position', (0, 0))
-                    self._find_and_click_correct_answer(question_position, answer, question_text)
-                    
-                    # Wait for and click submit answer button
-                    submit_result = self._wait_for_submit_answer_button()
-                    if submit_result.success:
-                        logger.info(f"Successfully submitted answer for question {question_count}")
-                        
-                        # Wait for trivia banner to appear after submission
-                        banner_result = self._wait_for_trivia_banner_after_submit()
-                        if not banner_result.success:
-                            logger.info(f"Trivia banner not found after question {question_count} - trivia completed, starting reward claiming")
-                            # Start reward claiming flow
-                            reward_result = self._handle_reward_claiming()
-                            if reward_result.success:
-                                logger.info("Reward claiming completed successfully")
-                            else:
-                                logger.warning(f"Reward claiming failed: {reward_result.message}")
-                            break
-                        else:
-                            logger.info("Trivia banner found - continuing to next question")
-                    else:
-                        logger.warning(f"Failed to find submit answer button for question {question_count}")
-                        # Still continue to next question
-                        time.sleep(2.0)
-                else:
+                if not answer:
                     logger.warning(f"No answer found for question {question_count}: {question_text}")
                     # Still try to continue to next question
                     time.sleep(2.0)
+                    continue
+                
+                logger.info(f"Answer: {answer}")
+                
+                # Find and click the correct answer option
+                question_position = result.data.get('question_position', (0, 0))
+                self._find_and_click_correct_answer(question_position, answer, question_text)
+                
+                # Wait for and click submit answer button
+                submit_result = self._wait_for_submit_answer_button()
+                if not submit_result.success:
+                    logger.warning(f"Failed to find submit answer button for question {question_count}")
+                    # Still continue to next question
+                    time.sleep(2.0)
+                    continue
+                
+                logger.info(f"Successfully submitted answer for question {question_count}\n")
+                
+                # Wait for trivia banner to appear after submission
+                banner_result = self._wait_for_trivia_banner_after_submit()
+                if not banner_result.success:
+                    logger.info(f"Trivia banner not found after question {question_count} - trivia completed, starting reward claiming")
+                    # Start reward claiming flow
+                    reward_result = self._handle_reward_claiming()
+                    if reward_result.success:
+                        logger.info("Reward claiming completed successfully")
+                    else:
+                        logger.warning(f"Reward claiming failed: {reward_result.message}")
+                    break
             
             logger.info(f"Completed trivia {trivia_name} with {question_count} questions")
             return ActionResult.success_result(f"Completed trivia {trivia_name} with {question_count} questions")
@@ -736,241 +794,99 @@ class TriviaAutomation(AutomationBase):
         except Exception as e:
             logger.error(f"Error comparing questions: {e}")
             return False
-    
-    def _check_answer_options(self, question_position):
-        """Move mouse to each answer option and extract text"""
-        try:
-            logger.info("Moving mouse to each answer option...")
-            
-            question_x, question_y = question_position
-            
-            # Check each answer option
-            for option_name, offset in ANSWER_POSITIONS.items():
-                logger.info(f"Checking {option_name} answer option...")
-                
-                # Calculate position for this answer option
-                answer_x = question_x + offset['x']
-                answer_y = question_y + offset['y']
-                
-                # Move mouse to answer option
-                pyautogui.moveTo(answer_x, answer_y)
-                
-                # Triple-click to select the answer text
-                pyautogui.tripleClick()
-                time.sleep(0.2)  # Small delay for selection
-                
-                # Copy to clipboard
-                pyautogui.hotkey('ctrl', 'c')
-                time.sleep(0.2)  # Small delay for clipboard
-                
-                # Get text from clipboard
-                answer_text = pyperclip.paste().strip()
-                logger.info(f"{option_name.capitalize()} answer text: {answer_text}\n")
-                
-                # Move mouse 30 pixels to the left to click the checkbox
-                checkbox_x = answer_x - 30
-                pyautogui.moveTo(checkbox_x, answer_y)
-                
-                # Click the checkbox
-                pyautogui.click(checkbox_x, answer_y)
-                logger.info(f"Clicked checkbox for {option_name} answer")
-                
-                # Reset mouse back to question position
-                pyautogui.moveTo(question_x, question_y)
-                
-                # Add delay between answer choices to prevent text mixing
-                time.sleep(0.2)
-            
-        except Exception as e:
-            logger.error(f"Error checking answer options: {e}")
-    
-    def _detect_question_wrapping(self, question_position):
-        """Detect if the question text wraps using character width estimation"""
-        try:
-            question_x, question_y = question_position
-            
-            # Get the question text from clipboard (should already be available)
-            question_text = pyperclip.paste().strip()
-            
-            if not question_text:
-                logger.warning("No question text available for width estimation")
-                return True, 0
-            
-            # Character width estimation for Comic Sans font (adjusted for actual font size)
-            # Based on your observation: 76 chars with width 54.7 was way over threshold
-            # This suggests we need much larger width values
-            char_widths = {
-                # Wide characters
-                'W': 2.0, 'M': 2.0, 'Q': 1.8, '@': 1.8,
-                # Medium-wide characters  
-                'A': 1.6, 'B': 1.5, 'D': 1.5, 'G': 1.5, 'O': 1.5, 'P': 1.5, 'R': 1.5, 'U': 1.5, 'V': 1.5, 'Y': 1.5,
-                'C': 1.4, 'E': 1.4, 'F': 1.4, 'H': 1.4, 'J': 1.4, 'K': 1.4, 'L': 1.4, 'N': 1.4, 'S': 1.4, 'T': 1.4, 'X': 1.4, 'Z': 1.4,
-                'I': 0.8, 'l': 0.8,  # Very narrow
-                # Lowercase
-                'w': 1.8, 'm': 1.6, 'q': 1.4, 'a': 1.2, 'b': 1.2, 'd': 1.2, 'g': 1.2, 'o': 1.2, 'p': 1.2,
-                'c': 1.1, 'e': 1.1, 'f': 1.0, 'h': 1.1, 'j': 0.8, 'k': 1.1, 'l': 0.8, 'n': 1.1, 'r': 0.8, 's': 1.0, 't': 1.0, 'u': 1.1, 'v': 1.1, 'x': 1.1, 'y': 1.1, 'z': 1.0,
-                'i': 0.7,  # Very narrow
-                # Numbers
-                '0': 1.4, '1': 0.8, '2': 1.4, '3': 1.4, '4': 1.4, '5': 1.4, '6': 1.4, '7': 1.4, '8': 1.4, '9': 1.4,
-                # Punctuation and symbols
-                ' ': 0.6, '.': 0.6, ',': 0.6, '!': 0.7, '?': 1.4, ':': 0.7, ';': 0.7, "'": 0.5, '"': 0.8,
-                '-': 0.8, '_': 1.1, '=': 1.4, '+': 1.4, '(': 0.8, ')': 0.8, '[': 0.8, ']': 0.8,
-                '&': 1.6, '%': 1.6, '$': 1.4, '#': 1.5, '*': 1.1, '/': 0.8, '\\': 0.8, '|': 0.6,
-                # Default for unknown characters
-                'default': 1.1
-            }
-            
-            # Calculate estimated width
-            estimated_width = 0
-            for char in question_text:
-                if char in char_widths:
-                    estimated_width += char_widths[char]
-                else:
-                    estimated_width += char_widths['default']
-            
-            # Estimate line width threshold (adjusted based on observed behavior)
-            # Single line: "What major engineering project did Marleybone attempt in Cool Ranch?" (71.3 width)
-            # Wrapped: "The Temple in Stymphalos was dedicated to which one of the Immortals?" (72.8 width)
-            # Threshold set between these two cases for accurate classification
-            line_width_threshold = 72.0  # Optimal threshold between single-line and wrapped cases
-            
-            is_single_line = estimated_width <= line_width_threshold
-            
-            logger.info(f"Question text: '{question_text}' ({len(question_text)} chars)")
-            logger.info(f"Estimated width: {estimated_width:.1f} (threshold: {line_width_threshold})")
-            logger.info(f"Question appears to be {'single line' if is_single_line else 'wrapped'}")
-            
-            return not is_single_line, estimated_width
-            
-        except Exception as e:
-            logger.warning(f"Error in character width estimation: {e}")
-            return True, 0  # Default to wrapped if detection fails
+
+    def _copy_text_from_position(self, x, y):
+        """Move mouse to position, triple-click, and copy text to clipboard"""
+        pyautogui.moveTo(x, y)
+        pyautogui.tripleClick()
+        time.sleep(0.3)
+        pyautogui.hotkey('ctrl', 'c')
+        time.sleep(0.3)
+        return pyperclip.paste().strip()
+
+    def _click_answer_checkbox(self, answer_x, answer_y, answer_text):
+        """Click the checkbox for an answer option (30 pixels to the left of answer text)"""
+        checkbox_x = answer_x - 30
+        pyautogui.moveTo(checkbox_x, answer_y)
+        pyautogui.click(checkbox_x, answer_y)
+        logger.info(f"Checked correct answer: {answer_text}")
 
     def _find_and_click_correct_answer(self, question_position, correct_answer, question_text):
-        """Find the correct answer option and click its checkbox"""
+        """Find the correct answer option and click its checkbox using individual position checks"""
         try:
-            
             question_x, question_y = question_position
             
-            # Detect if question text wraps using visual detection
-            is_wrapped, text_height = self._detect_question_wrapping(question_position)
+            # Determine y_adjustment based on first answer position
+            first_answer_x = question_x + ANSWER_POSITIONS['first']['x']
+            first_answer_y = question_y + ANSWER_POSITIONS['first']['y']
+            first_clipboard_text = self._copy_text_from_position(first_answer_x, first_answer_y)
             
-            # Adjust Y positions if question text is wrapped
             y_adjustment = 0
-            if is_wrapped:
+            if first_clipboard_text == '':
+                logger.info("First answer position is off - copied question instead of answer, adjusting Y position by 30px")
                 y_adjustment = 30
-                logger.info(f"Question text is wrapped (height: {text_height}px), adjusting answer positions by {y_adjustment} pixels")
+                first_clipboard_text = self._copy_text_from_position(first_answer_x, first_answer_y + y_adjustment)
+            
+            # Check first answer
+            first_answer_text = first_clipboard_text
+            logger.info(f"First answer text: {first_answer_text}")
+            
+            if self._answers_match(first_answer_text, correct_answer):
+                logger.info(f"Found Correct Answer: {first_answer_text}")
+                self._click_answer_checkbox(first_answer_x, first_answer_y + y_adjustment, first_answer_text)
+                return
             else:
-                logger.info(f"Question text is single line (height: {text_height}px), no Y adjustment needed")
+                logger.info(f"[WRONG] Not the correct answer: {first_answer_text}")
             
-            # First, check the first two answers to see if any are long
-            first_two_answers_long = False
-            try:
-                # Check first answer length
-                first_answer_x = question_x + ANSWER_POSITIONS['first']['x']
-                first_answer_y = question_y + ANSWER_POSITIONS['first']['y'] + y_adjustment
-                pyautogui.moveTo(first_answer_x, first_answer_y)
-                pyautogui.tripleClick()
-                time.sleep(0.5)  # Longer delay for selection
-                pyautogui.hotkey('ctrl', 'c')
-                time.sleep(0.5)  # Longer delay for clipboard
-                first_answer_text = pyperclip.paste().strip()
-                # Clean any problematic unicode characters
-                first_answer_text = first_answer_text.encode('ascii', 'ignore').decode('ascii')
-                
-                # Check second answer length
-                second_answer_x = question_x + ANSWER_POSITIONS['second']['x']
-                second_answer_y = question_y + ANSWER_POSITIONS['second']['y'] + y_adjustment
-                pyautogui.moveTo(second_answer_x, second_answer_y)
-                pyautogui.tripleClick()
-                time.sleep(0.5)  # Longer delay for selection
-                pyautogui.hotkey('ctrl', 'c')
-                time.sleep(0.5)  # Longer delay for clipboard
-                second_answer_text = pyperclip.paste().strip()
-                # Clean any problematic unicode characters
-                second_answer_text = second_answer_text.encode('ascii', 'ignore').decode('ascii')
-                
-                # Check if either of the first two answers is longer than 26 characters
-                if len(first_answer_text) > 26 or len(second_answer_text) > 26:
-                    first_two_answers_long = True
-                    logger.info(f"First two answers are long (first: {len(first_answer_text)} chars, second: {len(second_answer_text)} chars), will adjust last two answer positions")
-                
-                # Check if first answer is correct
-                if self._answers_match(first_answer_text, correct_answer):
-                    logger.info(f"[CORRECT] FOUND CORRECT ANSWER: {first_answer_text}")
-                    checkbox_x = first_answer_x - 30
-                    pyautogui.moveTo(checkbox_x, first_answer_y)
-                    pyautogui.click(checkbox_x, first_answer_y)
-                    logger.info(f"[CORRECT] Clicked checkbox for correct answer: {first_answer_text}\n")
-                    return
-                
-                # Check if second answer is correct
-                if self._answers_match(second_answer_text, correct_answer):
-                    logger.info(f"[CORRECT] FOUND CORRECT ANSWER: {second_answer_text}")
-                    checkbox_x = second_answer_x - 30
-                    pyautogui.moveTo(checkbox_x, second_answer_y)
-                    pyautogui.click(checkbox_x, second_answer_y)
-                    logger.info(f"[CORRECT] Clicked checkbox for correct answer: {second_answer_text}\n")
-                    return
-                
-                logger.info(f"[WRONG] First answer: {first_answer_text}")
-                logger.info(f"[WRONG] Second answer: {second_answer_text}")
-                
-            except Exception as e:
-                logger.warning(f"Could not check first two answer lengths: {e}")
+            # Check second answer
+            logger.info("Checking second answer option...")
+            second_answer_x = question_x + ANSWER_POSITIONS['second']['x']
+            second_answer_y = question_y + ANSWER_POSITIONS['second']['y'] + y_adjustment
+            second_answer_text = self._copy_text_from_position(second_answer_x, second_answer_y)
+            logger.info(f"Second answer text: {second_answer_text}")
             
-            # Now check the last two answers with proper positioning
-            for option_name in ['third', 'fourth']:
-                logger.info(f"Checking {option_name} answer option...")
-                
-                offset = ANSWER_POSITIONS[option_name]
-                answer_x = question_x + offset['x']
-                answer_y = question_y + offset['y'] + y_adjustment
-                
-                # Add extra Y adjustment for last two answers if first two are long
-                if first_two_answers_long:
-                    answer_y += 20
-                    logger.info(f"Adjusting {option_name} answer position by 20px due to long first two answers")
-                
-                # Move mouse to answer option
-                pyautogui.moveTo(answer_x, answer_y)
-                
-                # Triple-click to select the answer text
-                pyautogui.tripleClick()
-                time.sleep(0.5)  # Longer delay for selection
-                
-                # Copy to clipboard
-                pyautogui.hotkey('ctrl', 'c')
-                time.sleep(0.5)  # Longer delay for clipboard
-                
-                # Get text from clipboard and clean it
-                answer_text = pyperclip.paste().strip()
-                # Clean any problematic unicode characters
-                answer_text = answer_text.encode('ascii', 'ignore').decode('ascii')
-                logger.info(f"{option_name.capitalize()} answer text: {answer_text}")
-                
-                # Check if this is the correct answer
-                if self._answers_match(answer_text, correct_answer):
-                    logger.info(f"[CORRECT] FOUND CORRECT ANSWER: {answer_text}")
-                    
-                    # Move mouse 30 pixels to the left to click the checkbox
-                    checkbox_x = answer_x - 30
-                    pyautogui.moveTo(checkbox_x, answer_y)
-                    
-                    # Click the checkbox
-                    pyautogui.click(checkbox_x, answer_y)
-                    logger.info(f"[CORRECT] Clicked checkbox for correct answer: {answer_text}\n")
-                    
-                    # Stop looking - we found the correct answer
-                    return
-                else:
-                    logger.info(f"[WRONG] Not the correct answer: {answer_text}\n")
-                
-                    # Reset mouse back to question position
-                    pyautogui.moveTo(question_x, question_y)
-                    
-                    # Small delay before checking next option
-                    time.sleep(0.2)
+            if self._answers_match(second_answer_text, correct_answer):
+                logger.info(f"Found Correct Answer: {second_answer_text}")
+                self._click_answer_checkbox(second_answer_x, second_answer_y, second_answer_text)
+                return
+            else:
+                logger.info(f"[WRONG] Not the correct answer: {second_answer_text}")
+            
+            # Check third answer
+            logger.info("Checking third answer option...")
+            third_answer_x = question_x + ANSWER_POSITIONS['third']['x']
+            third_answer_y = question_y + ANSWER_POSITIONS['third']['y'] + y_adjustment
+            third_answer_text = self._copy_text_from_position(third_answer_x, third_answer_y)
+            
+            # Check if we need additional adjustment for third answer
+            if third_answer_text == '':
+                logger.info("Third answer position is off - copied question or first answer, adjusting Y position by additional 20px")
+                y_adjustment += 20
+                third_answer_y = question_y + ANSWER_POSITIONS['third']['y'] + y_adjustment
+                third_answer_text = self._copy_text_from_position(third_answer_x, third_answer_y)
+            
+            logger.info(f"Third answer text: {third_answer_text}")
+            
+            if self._answers_match(third_answer_text, correct_answer):
+                logger.info(f"Found Correct Answer: {third_answer_text}")
+                self._click_answer_checkbox(third_answer_x, third_answer_y, third_answer_text)
+                return
+            else:
+                logger.info(f"[WRONG] Not the correct answer: {third_answer_text}")
+            
+            # Check fourth answer
+            logger.info("Checking fourth answer option...")
+            fourth_answer_x = question_x + ANSWER_POSITIONS['fourth']['x']
+            fourth_answer_y = question_y + ANSWER_POSITIONS['fourth']['y'] + y_adjustment
+            fourth_answer_text = self._copy_text_from_position(fourth_answer_x, fourth_answer_y)
+            logger.info(f"Fourth answer text: {fourth_answer_text}")
+            
+            if self._answers_match(fourth_answer_text, correct_answer):
+                logger.info(f"Found Correct Answer: {fourth_answer_text}")
+                self._click_answer_checkbox(fourth_answer_x, fourth_answer_y, fourth_answer_text)
+                return
+            else:
+                logger.info(f"[WRONG] Not the correct answer: {fourth_answer_text}")
             
             logger.warning("Could not find the correct answer among the options")
             
@@ -1099,7 +1015,8 @@ class TriviaAutomation(AutomationBase):
                 "Submit Answer Button",
                 AssetPaths.TriviaTemplates.SUBMIT_ANSWER_BUTTON,
                 timeout=10.0,
-                post_click_delay=0.0
+                post_click_delay=0.0,
+                confidence_threshold=0.95  # High confidence for submit button
             )
         except Exception as e:
             logger.error(f"Error waiting for submit answer button: {e}")

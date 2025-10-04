@@ -68,3 +68,6 @@ screenshots_disabled/
 # Temporary files
 *.tmp
 *.temp
+
+# Bot execution tracking data
+bot_tracking/

@@ -1,0 +1,40 @@
+# World Navigation Configuration
+# This file contains configuration settings for world navigation automation
+
+# Movement pattern to get to the world gate from house start
+go_to_world_gate:
+  - key: "s"          # Move backward from house start
+    duration: 1       # Hold for 1 seconds
+
+# World-specific navigation patterns (placeholder for future implementation)
+world_navigation:
+  enabled: true
+  worlds:
+    # Example world patterns (to be implemented)
+    # "wizard_city":
+    #   - key: "w"
+    #     duration: 2.0
+    #   - key: "a"
+    #     duration: 1.5
+    # "krokotopia":
+    #   - key: "w"
+    #     duration: 3.0
+
+# World navigation settings
+world_settings:
+  enabled: true
+  check_interval: 300  # Check every 5 minutes
+  max_attempts: 10
+  world_gate_delay: 2.0  # Wait time after opening world gate
+  spiral_map_timeout: 10.0  # Timeout for waiting for spiral map to appear
+
+# World selection settings (target world is specified by the calling automation)
+world_selection:
+  max_spiral_rotations: 10  # Maximum number of spiral rotations before giving up
+  world_detection_timeout: 5.0  # Timeout for detecting world on spiral map
+  arrow_click_delay: 1.0  # Delay between arrow clicks
+
+# Future world navigation actions (placeholder for now)
+# world_actions:
+#   enabled: false
+#   actions: []

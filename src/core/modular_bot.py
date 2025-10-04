@@ -40,6 +40,12 @@ class ModularBot:
             TriviaAutomation
         ])
         
+        # Farming automation
+        from src.automation.farming_automation import FarmingAutomation
+        self.registry.register_automation_type("farming", [
+            FarmingAutomation
+        ])
+        
         # Future automation types can be added here
         # self.registry.register_automation_type("fishing", [
         #     HousingNavigationAutomation,

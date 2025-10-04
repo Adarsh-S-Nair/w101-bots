@@ -9,11 +9,10 @@ from src.core.automation_base import AutomationBase
 from src.core.action_result import ActionResult
 from src.core.element import ElementSearchCriteria, ElementType, DetectionMethod
 from src.utils.logger import logger
-from src.utils.ocr_utils import OCRUtils
 from src.constants import AssetPaths
 from config import config
 from src.automation.movement_automation import MovementAutomation
-from src.data.plant_tracker import PlantTracker
+from src.utils.bot_execution_tracker import GardeningBotTracker
 
 class GardeningAutomation(AutomationBase):
     """Handles gardening-specific automation tasks in Wizard101"""
@@ -21,16 +20,22 @@ class GardeningAutomation(AutomationBase):
     def __init__(self, ui_detector):
         super().__init__(ui_detector)
         self.movement_automation = MovementAutomation(ui_detector)
-        self.ocr_utils = OCRUtils()
         self.garden_config = self._load_garden_config()
-        self.plant_tracker = PlantTracker()
+        self.execution_tracker = GardeningBotTracker()
     
     def execute(self) -> ActionResult:
         """Execute gardening automation workflow"""
+        # Start tracking execution
+        execution_data = self.execution_tracker.start_execution()
+        execution_id = execution_data["execution_id"]
+        actions_performed = []
+        plant_data = None
+        
         try:
             logger.info("Starting gardening automation")
 
             # First, navigate to the main garden area
+            # Note: Housing navigation is already handled by the modular bot framework
             nav_result = self.navigate_to_garden()
             if not nav_result.success:
                 raise RuntimeError("Failed to navigate to garden area")
@@ -40,43 +45,82 @@ class GardeningAutomation(AutomationBase):
             if not readiness_result.success:
                 raise RuntimeError("Failed to check couch potatoes status")
 
-            # couch_potatoes_ready = bool(readiness_result.data and readiness_result.data.get('couch_potatoes_ready', False))
-            # if couch_potatoes_ready:
-            #     # Harvest and replant flow
-            #     logger.info("Couch potatoes are elder and ready! Starting harvest and replant cycle...")
-            #     harvest_result = self.harvest_couch_potatoes()
-            #     if not harvest_result.success:
-            #         raise RuntimeError("Harvest failed")
+            couch_potatoes_ready = bool(readiness_result.data and readiness_result.data.get('couch_potatoes_ready', False))
+            if couch_potatoes_ready:
+                # Harvest and replant flow
+                logger.info("Couch potatoes are elder and ready! Starting harvest and replant cycle...")
+                harvest_result = self.harvest_couch_potatoes()
+                if not harvest_result.success:
+                    raise RuntimeError("Harvest failed")
+                actions_performed.append("harvest")
 
-            #     logger.info("Starting replanting process...")
-            #     replant_result = self.replant_couch_potatoes()
-            #     if not replant_result.success:
-            #         raise RuntimeError("Replanting failed")
-            # else:
-            #     # Not ready: check for needs and handle them if present
-            #     logger.info("Couch potatoes not ready. Checking for plant needs...")
-            #     needs_result = self.check_plant_needs()
-            #     if needs_result.success and needs_result.data and needs_result.data.get('needs_detected', False):
-            #         logger.info("Plant needs detected! Handling needs...")
-            #         handle_result = self.handle_plant_needs()
-            #     else:
-            #         logger.info("No plant needs detected")
+                logger.info("Starting replanting process...")
+                replant_result = self.replant_couch_potatoes()
+                if not replant_result.success:
+                    raise RuntimeError("Replanting failed")
+                actions_performed.append("replant")
+            else:
+                # Not ready: check for needs and handle them if present
+                logger.info("Couch potatoes not ready. Checking for plant needs...")
+                needs_result = self.check_plant_needs()
+                if needs_result.success and needs_result.data and needs_result.data.get('needs_detected', False):
+                    logger.info("Plant needs detected! Handling needs...")
+                    handle_result = self.handle_plant_needs()
+                    if handle_result.success:
+                        actions_performed.append("needs_handling")
+                else:
+                    logger.info("No plant needs detected")
 
             # Update plant status only after successful navigation/workflow
             logger.info("Updating plant status at end of gardening run...")
             status_result = self.update_plant_status()
-            if not status_result.success:
+            if status_result.success and status_result.data:
+                plant_data = status_result.data
+                # Update plant status in tracker
+                self.execution_tracker.update_plant_status(plant_data)
+            else:
                 logger.warning("Plant status update encountered an issue at end of run")
 
             logger.info("Gardening automation completed successfully")
+            
+            # Complete execution tracking with success
+            completion_info = self.execution_tracker.complete_execution(
+                execution_id=execution_id,
+                success=True,
+                plant_data=plant_data,
+                actions_performed=actions_performed,
+                execution_summary={
+                    "actions_count": len(actions_performed),
+                    "plant_ready": couch_potatoes_ready
+                }
+            )
+            
             return ActionResult.success_result("Gardening automation completed successfully")
         except Exception as e:
+            logger.error(f"Error in gardening automation: {e}")
+            
+            # Complete execution tracking with failure
+            self.execution_tracker.complete_execution(
+                execution_id=execution_id,
+                success=False,
+                plant_data=plant_data,
+                actions_performed=actions_performed,
+                execution_summary={
+                    "error": str(e),
+                    "actions_count": len(actions_performed)
+                }
+            )
+            
             return ActionResult.failure_result("Gardening automation failed", error=e)
     
     def navigate_to_garden(self) -> ActionResult:
         """Navigate to the main garden area"""
         try:
             logger.info("Navigating to garden area...")
+            
+            # Wait 1.5 seconds after housing navigation (handled by modular bot)
+            logger.info("Waiting 1.5 seconds after housing navigation...")
+            time.sleep(1.5)
             
             # Use movement automation to navigate to garden
             result = self.movement_automation.navigate_to_garden()
@@ -95,6 +139,26 @@ class GardeningAutomation(AutomationBase):
     def get_movement_automation(self) -> MovementAutomation:
         """Get the movement automation instance for external use"""
         return self.movement_automation
+    
+    def is_time_to_run(self) -> bool:
+        """Check if it's time to run the gardening bot based on the schedule"""
+        return self.execution_tracker.is_time_to_run()
+    
+    def get_next_run_time(self):
+        """Get the next scheduled run time for the gardening bot"""
+        return self.execution_tracker.get_next_run_time()
+    
+    def get_execution_stats(self):
+        """Get gardening bot execution statistics"""
+        return self.execution_tracker.get_gardening_stats()
+    
+    def get_execution_history(self, limit: int = 10):
+        """Get recent gardening bot execution history"""
+        return self.execution_tracker.get_execution_history(limit)
+    
+    def get_plant_status_history(self, limit: int = 10):
+        """Get recent plant status history"""
+        return self.execution_tracker.get_plant_status_history(limit)
     
     def check_couch_potatoes_ready(self) -> ActionResult:
         """Check if elder couch potatoes are ready for harvest"""
@@ -158,19 +222,19 @@ class GardeningAutomation(AutomationBase):
             # Determine plant type from garden config
             plot_plant_type = (self.garden_config or {}).get('plot_plant_type')
             if not plot_plant_type:
-                logger.warning("plot_plant_type not set in garden_config.yaml")
-                return ActionResult.failure_result("plot_plant_type not set in garden_config.yaml")
+                logger.warning("plot_plant_type not set in config/garden_config.yaml")
+                return ActionResult.failure_result("plot_plant_type not set in config/garden_config.yaml")
 
             # Use the lowercase key directly (must match plant_database keys)
             plant_key = str(plot_plant_type).strip()
 
             # Load plant database
-            with open('plant_database.yaml', 'r', encoding='utf-8') as file:
+            with open('config/plant_database.yaml', 'r', encoding='utf-8') as file:
                 plant_db = yaml.safe_load(file) or {}
             plant_data = (plant_db.get('plants') or {}).get(plant_key)
             if not plant_data:
-                logger.warning(f"Plant '{plant_key}' not found in plant_database.yaml")
-                return ActionResult.failure_result(f"Plant '{plant_key}' not found in plant_database.yaml")
+                logger.warning(f"Plant '{plant_key}' not found in config/plant_database.yaml")
+                return ActionResult.failure_result(f"Plant '{plant_key}' not found in config/plant_database.yaml")
 
             needs = ((plant_data.get('needs_handling') or {}).get('steps')) or []
             if not needs:
@@ -182,7 +246,7 @@ class GardeningAutomation(AutomationBase):
                 is_last_step = index == (len(needs) - 1)
 
                 # Open the gardening menu at the beginning of each step
-                open_result = self._open_gardening_menu()
+                open_result = self._toggle_gardening_menu()
                 if not open_result.success:
                     return open_result
 
@@ -213,9 +277,14 @@ class GardeningAutomation(AutomationBase):
                 # Move mouse to configured coordinates and wait (for testing)
                 self._position_mouse_for_spell_casting()
 
-                # If not the last step, navigate back to the front of the house and then back to garden
+                # Close the gardening menu after each step (except the last one)
                 if not is_last_step:
-                    logger.info("Step completed. Navigating back to the front of the house and then back to garden before next step...")
+                    logger.info("Step completed. Closing gardening menu...")
+                    close_result = self._toggle_gardening_menu()
+                    if not close_result.success:
+                        logger.warning("Failed to close gardening menu, but continuing...")
+                    
+                    logger.info("Navigating back to the front of the house and then back to garden before next step...")
                     nav_result = self._navigate_house_front_and_back_to_garden()
                     if not nav_result.success:
                         return nav_result
@@ -227,16 +296,16 @@ class GardeningAutomation(AutomationBase):
             logger.error(f"Failed to handle plant needs: {e}")
             return ActionResult.failure_result("Failed to handle plant needs", error=e)
 
-    def _open_gardening_menu(self) -> ActionResult:
-        """Open the gardening menu by pressing 'g' and waiting briefly."""
+    def _toggle_gardening_menu(self) -> ActionResult:
+        """Toggle the gardening menu by pressing 'g' and waiting briefly."""
         try:
-            logger.info("Opening gardening menu to handle needs...")
+            logger.info("Toggling gardening menu...")
             pyautogui.press('g')
             time.sleep(1.0)
-            return ActionResult.success_result("Gardening menu opened")
+            return ActionResult.success_result("Gardening menu toggled")
         except Exception as e:
-            logger.error(f"Failed to open gardening menu: {e}")
-            return ActionResult.failure_result("Failed to open gardening menu", error=e)
+            logger.error(f"Failed to toggle gardening menu: {e}")
+            return ActionResult.failure_result("Failed to toggle gardening menu", error=e)
 
     def _select_gardening_category(self, category_const: str, category_filename: str) -> ActionResult:
         """Find and click a gardening category by constant/filename."""
@@ -345,13 +414,13 @@ class GardeningAutomation(AutomationBase):
     def _load_garden_config(self) -> dict:
         """Load garden configuration from garden_config.yaml"""
         try:
-            with open('garden_config.yaml', 'r', encoding='utf-8') as file:
+            with open('config/garden_config.yaml', 'r', encoding='utf-8') as file:
                 return yaml.safe_load(file) or {}
         except FileNotFoundError:
-            logger.warning("garden_config.yaml not found, using default configuration")
+            logger.warning("config/garden_config.yaml not found, using default configuration")
             return {}
         except yaml.YAMLError as e:
-            logger.error(f"Error parsing garden_config.yaml: {e}")
+            logger.error(f"Error parsing config/garden_config.yaml: {e}")
             return {}
     
     def _is_garden_actions_enabled(self) -> bool:
@@ -523,6 +592,10 @@ class GardeningAutomation(AutomationBase):
             if not house_nav_result.success:
                 logger.warning("Failed to navigate to house start")
                 return ActionResult.failure_result("Failed to navigate to house start")
+            
+            # Wait 1.5 seconds after navigating to house start
+            logger.info("Waiting 1.5 seconds after house navigation...")
+            time.sleep(1.5)
             
             # Step 2: Navigate back to garden
             logger.info("Step 2: Navigating back to garden...")
@@ -851,21 +924,15 @@ class GardeningAutomation(AutomationBase):
             # Wait for popup to appear after hovering
             time.sleep(1.5)
             
-            # Try to read the plant popup content
-            popup_result = self.ocr_utils.read_plant_popup()
-            if popup_result.success:
-                logger.info("Successfully read plant popup content")
-                
-                # Parse the plant status from the OCR text
-                plant_status = self._parse_plant_status(popup_result.data)
-                if plant_status:
-                    self._log_plant_status(plant_status)
-                    # Save plant status to tracker for automation
-                    self._save_plant_status(plant_status)
-                else:
-                    logger.warning("Failed to parse plant status from popup content")
+            # Extract plant status using template matching (no OCR needed)
+            logger.info("Starting plant status extraction with template matching...")
+            plant_status = self._extract_plant_status_with_template_matching()
+            if plant_status:
+                self._log_plant_status(plant_status)
+                logger.info("Successfully extracted plant status using template matching")
+                return ActionResult.success_result("Successfully extracted plant status using template matching", data=plant_status)
             else:
-                logger.warning("Failed to read plant popup content")
+                logger.warning("Failed to extract plant status using template matching")
             
             logger.info("Successfully positioned and wiggled mouse at center of screen")
             return ActionResult.success_result("Successfully positioned and wiggled mouse at center of screen")
@@ -898,21 +965,17 @@ class GardeningAutomation(AutomationBase):
             logger.error(f"Failed to wiggle mouse: {e}")
             return ActionResult.failure_result("Failed to wiggle mouse", error=e)
     
-    def _parse_plant_status(self, ocr_text: str) -> dict:
-        """Parse plant status from OCR text"""
+    def _extract_plant_status_with_template_matching(self) -> dict:
+        """Extract plant status using template matching (no OCR needed)"""
         try:
             import yaml
-            import re
             
             # Load plant database
-            with open('plant_database.yaml', 'r', encoding='utf-8') as file:
+            with open('config/plant_database.yaml', 'r', encoding='utf-8') as file:
                 plant_db = yaml.safe_load(file)
             
-            # Extract plant name
-            plant_name = self._extract_plant_name(ocr_text)
-            if not plant_name:
-                logger.warning("Could not identify plant name from OCR text")
-                return None
+            # For now, assume couch potatoes (can be made configurable later)
+            plant_name = 'couch_potatoes'
             
             # Get plant data from database
             plant_data = plant_db['plants'].get(plant_name)
@@ -920,17 +983,14 @@ class GardeningAutomation(AutomationBase):
                 logger.warning(f"Plant '{plant_name}' not found in database")
                 return None
             
-            # Extract current stage
-            current_stage = self._extract_current_stage(ocr_text)
-            if not current_stage:
-                logger.warning("Could not determine current plant stage")
-                return None
-            
-            # Extract likes
-            likes = self._extract_likes(ocr_text)
+            # Extract likes using template matching
+            likes = self._extract_likes_with_template_matching(plant_name)
             
             # Calculate growth modifiers
             modifiers = self._calculate_growth_modifiers(likes, plant_data['growth_modifiers'])
+            
+            # For now, assume mature stage (can be enhanced with stage detection later)
+            current_stage = 'mature'
             
             # Determine next stage and time to next stage
             next_stage, time_to_next = self._calculate_next_stage(current_stage, plant_data['stages'], modifiers)
@@ -947,156 +1007,149 @@ class GardeningAutomation(AutomationBase):
                 'current_stage': current_stage,
                 'next_stage': next_stage,
                 'time_to_next_hours': time_to_next,
-                'likes': likes,
                 'modifiers': modifiers,
                 'effective_speed_percent': effective_speed_percent
             }
             
         except Exception as e:
-            logger.error(f"Failed to parse plant status: {e}")
+            logger.error(f"Failed to extract plant status with template matching: {e}")
             return None
     
-    def _extract_plant_name(self, text: str) -> str:
-        """Extract plant name from OCR text"""
-        # Look for known plant names in the text
-        plant_names = {
-            'COUCH POTATOES': 'couch_potatoes',
-            'Couch Potatoes': 'couch_potatoes'
+    def _extract_likes_with_template_matching(self, plant_key: str) -> list:
+        """Extract likes using template matching instead of OCR"""
+        try:
+            # Load plant database to get modifiers for this plant
+            with open('config/plant_database.yaml', 'r', encoding='utf-8') as file:
+                plant_db = yaml.safe_load(file)
+            
+            plant_data = plant_db['plants'].get(plant_key)
+            if not plant_data:
+                logger.warning(f"Plant '{plant_key}' not found in database")
+                return []
+            
+            growth_modifiers = plant_data.get('growth_modifiers', {})
+            detected_likes = []
+            checked_templates = set()  # Track which templates we've already checked
+            
+            logger.info("=" * 60)
+            logger.info("CHECKING FOR PLANT LIKES WITH TEMPLATE MATCHING")
+            logger.info("=" * 60)
+            
+            # Check each modifier category and look for corresponding templates
+            house_modifier_found = False
+            for modifier_percent, items in growth_modifiers.items():
+                logger.info(f"Checking {modifier_percent} modifiers:")
+                for item in items:
+                    logger.info(f"  Checking for: {item}")
+                    
+                    # Skip house modifiers if we've already found one
+                    house_modifiers = ["Botanical Gardens", "Country Cottage", "Everafter Village", "Outback Ranch", "Red Barn Farm"]
+                    if house_modifier_found and item in house_modifiers:
+                        logger.info(f"  [SKIP] House modifier already found, skipping {item}")
+                        continue
+                    
+                    # Get the template filename for this item
+                    template_filename = self._get_template_filename(item)
+                    if not template_filename:
+                        logger.info(f"  [SKIP] No template for {item}")
+                        continue
+                    
+                    # Skip if we've already checked this template
+                    if template_filename in checked_templates:
+                        logger.info(f"  [SKIP] Already checked template {template_filename} for {item}")
+                        continue
+                    
+                    # Check if we should look for this item using template matching
+                    template_found = self._check_like_template(item)
+                    checked_templates.add(template_filename)
+                    
+                    if template_found:
+                        detected_likes.append(item)
+                        logger.info(f"  [FOUND] {item} ({modifier_percent})")
+                        
+                        # Special handling: if we found a house-related modifier, mark it
+                        if item in house_modifiers:
+                            house_modifier_found = True
+                            logger.info(f"  -> Found house modifier '{item}', will skip other house modifiers")
+                    else:
+                        logger.info(f"  [NOT FOUND] {item}")
+                
+            
+            logger.info("=" * 60)
+            logger.info(f"TEMPLATE MATCHING COMPLETE - Found {len(detected_likes)} likes:")
+            for like in detected_likes:
+                logger.info(f"  - {like}")
+            logger.info("=" * 60)
+            
+            return detected_likes
+            
+        except Exception as e:
+            logger.error(f"Failed to extract likes with template matching: {e}")
+            return []
+    
+    def _get_template_filename(self, item: str) -> str:
+        """Get the template filename for a given item"""
+        template_mapping = {
+            "King Parsley": AssetPaths.GardeningTemplates.LIKES_KING_PARSLEY,
+            "Litter": AssetPaths.GardeningTemplates.LIKES_LITTER,
+            "Pixie": AssetPaths.GardeningTemplates.LIKES_PIXIE,
+            "Sandwich Station": AssetPaths.GardeningTemplates.LIKES_SANDWICH_STATION,
+            "Botanical Gardens": AssetPaths.GardeningTemplates.LIKES_THIS_HOUSE,
+            "Country Cottage": AssetPaths.GardeningTemplates.LIKES_THIS_HOUSE,
+            "Everafter Village": AssetPaths.GardeningTemplates.LIKES_THIS_HOUSE,
+            "Outback Ranch": AssetPaths.GardeningTemplates.LIKES_THIS_HOUSE,
+            "Red Barn Farm": AssetPaths.GardeningTemplates.LIKES_THIS_HOUSE,
+            "Tropical Garden Gnome": AssetPaths.GardeningTemplates.LIKES_GARDEN_GNOMES,
+            "Stinkweed": None  # Negative modifier - no template needed
         }
-        
-        for display_name, db_name in plant_names.items():
-            if display_name in text.upper():
-                return db_name
-        
-        return None
+        return template_mapping.get(item)
     
-    def _extract_current_stage(self, text: str) -> str:
-        """Extract current plant stage from OCR text"""
-        text_upper = text.upper()
-        
-        # Look for progress indicators - handle OCR misreading issues
-        # OCR sometimes reads "PROGRESS" as "STOELLR", "PROGRESS TO" as "STOELLR:", etc.
-        # Also handle "TIME TO HARVEST" vs "TIL HARVEST"
-        
-        # Check for various OCR misreadings of "PROGRESS TO YOUNG:"
-        if any(pattern in text_upper for pattern in [
-            'PROGRESS TO YOUNG:', 'TO YOUNG:', 'STOELLR: YOUNG', 'STOELLR YOUNG',
-            'PROGRESS YOUNG:', 'PROGRESS YOUNG'
-        ]):
-            return 'seedling'
-        # Check for various OCR misreadings of "PROGRESS TO MATURE:"
-        elif any(pattern in text_upper for pattern in [
-            'PROGRESS TO MATURE:', 'TO MATURE:', 'STOELLR: MATURE', 'STOELLR MATURE',
-            'PROGRESS MATURE:', 'PROGRESS MATURE'
-        ]):
-            return 'young'
-        # Check for various OCR misreadings of "PROGRESS TO ELDER:"
-        elif any(pattern in text_upper for pattern in [
-            'PROGRESS TO ELDER:', 'TO ELDER:', 'STOELLR: ELDER', 'STOELLR ELDER',
-            'PROGRESS ELDER:', 'PROGRESS ELDER', 'STOELLR: Cj'  # This matches your OCR output
-        ]):
-            return 'mature'
-        # Check if already elder (no progress indicators)
-        elif 'ELDER' in text_upper and not any(pattern in text_upper for pattern in [
-            'PROGRESS', 'STOELLR', 'TO YOUNG', 'TO MATURE', 'TO ELDER'
-        ]):
-            return 'elder'
-        
-        return None
-    
-    def _extract_likes(self, text: str) -> list:
-        """Extract likes from OCR text"""
-        likes = []
-        lines = text.split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            # Handle OCR misreading of "LIKES:" as "IKES:" or "ES:"
-            if (line.upper().startswith('LIKES:') or 
-                line.upper().startswith('IKES:') or 
-                line.upper().startswith('ES:')):
-                
-                # Extract the like item, handling different prefixes
-                if line.upper().startswith('LIKES:'):
-                    like_item = line.replace('LIKES:', '').strip()
-                elif line.upper().startswith('IKES:'):
-                    like_item = line.replace('IKES:', '').strip()
-                elif line.upper().startswith('ES:'):
-                    like_item = line.replace('ES:', '').strip()
-                else:
-                    like_item = ''
-                
-                if like_item:
-                    # Clean up OCR anomalies
-                    like_item = self._clean_like_item(like_item)
-                    
-                    # Handle "This House" - we'll need to determine the actual house type
-                    if like_item.upper() == 'THIS HOUSE':
-                        # For now, we'll assume Red Barn Farm since that's what we're using
-                        # In a real implementation, you'd need to detect the actual house type
-                        like_item = 'Red Barn Farm'
-                    
-                    if like_item:  # Only add if we have something after cleaning
-                        likes.append(like_item)
-        
-        return likes
-    
-    def _clean_like_item(self, item: str) -> str:
-        """Clean up OCR anomalies in like items"""
-        import re
-        
-        # Remove common OCR artifacts
-        cleaned = item.strip()
-        
-        # Remove trailing punctuation and symbols
-        cleaned = re.sub(r'[|!@#$%^&*()_+=\[\]{};:"\\|,.<>?/~`]+$', '', cleaned)
-        
-        # Remove leading punctuation and symbols
-        cleaned = re.sub(r'^[|!@#$%^&*()_+=\[\]{};:"\\|,.<>?/~`]+', '', cleaned)
-        
-        # Remove extra whitespace
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        
-        return cleaned
+    def _check_like_template(self, item: str) -> bool:
+        """Check if a like template is present on screen for the given item"""
+        try:
+            template_filename = self._get_template_filename(item)
+            if not template_filename:
+                logger.debug(f"    No template mapping found for item: {item}")
+                return False
+            
+            logger.debug(f"    Using template: {template_filename}")
+            
+            # Define search criteria for the like template
+            like_criteria = ElementSearchCriteria(
+                name=f"likes_{item.lower().replace(' ', '_')}",
+                element_type=ElementType.IMAGE,
+                template_path=config.get_gardening_template_path(template_filename),
+                confidence_threshold=0.8,
+                detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
+                metadata={"description": f"Like template for {item}"}
+            )
+            
+            # Check if the template is present
+            is_present = self.ui_detector.is_element_present(like_criteria)
+            if is_present:
+                logger.debug(f"    Template match found for: {item}")
+            else:
+                logger.debug(f"    Template match not found for: {item}")
+            
+            return is_present
+            
+        except Exception as e:
+            logger.error(f"Failed to check like template for '{item}': {e}")
+            return False
     
     def _calculate_growth_modifiers(self, likes: list, plant_modifiers: dict) -> dict:
-        """Calculate growth modifiers based on likes"""
+        """Calculate growth modifiers based on likes (now using exact template matches)"""
         modifiers = {}
         
         for like in likes:
             for modifier_percent, items in plant_modifiers.items():
-                for item in items:
-                    # Use flexible matching to handle OCR variations
-                    if self._matches_like_item(like, item):
-                        # Convert percentage string to float
-                        percent = float(modifier_percent.replace('%', '').replace('+', ''))
-                        modifiers[item] = percent
-                        break
+                if like in items:
+                    # Convert percentage string to float
+                    percent = float(modifier_percent.replace('%', '').replace('+', ''))
+                    modifiers[like] = percent
+                    break
         
         return modifiers
-    
-    def _matches_like_item(self, like: str, database_item: str) -> bool:
-        """Check if a like item matches a database item with OCR tolerance"""
-        like_upper = like.upper().strip()
-        item_upper = database_item.upper().strip()
-        
-        # Special case: Garden Gnomes is an alias for Tropical Garden Gnome
-        if like_upper == "GARDEN GNOMES" and item_upper == "TROPICAL GARDEN GNOME":
-            return True
-        
-        # Exact match
-        if like_upper == item_upper:
-            return True
-        
-        # Check if like contains the database item (for partial matches)
-        if item_upper in like_upper:
-            return True
-        
-        # Check if database item contains the like (for partial matches)
-        if like_upper in item_upper:
-            return True
-        
-        return False
     
     def _calculate_next_stage(self, current_stage: str, stages: dict, modifiers: dict) -> tuple:
         """Calculate next stage and time to reach it"""
@@ -1136,10 +1189,6 @@ class GardeningAutomation(AutomationBase):
         logger.info(f"Next Stage: {status['next_stage'].upper()}")
         logger.info(f"Time to Next Stage: {status['time_to_next_hours']:.4f} hours")
         logger.info("")
-        logger.info("LIKES:")
-        for like in status['likes']:
-            logger.info(f"  - {like}")
-        logger.info("")
         logger.info("GROWTH MODIFIERS:")
         if status['modifiers']:
             for item, percent in status['modifiers'].items():
@@ -1152,16 +1201,4 @@ class GardeningAutomation(AutomationBase):
         logger.info(f"TIME REDUCTION: {100 - status['effective_speed_percent']:.2f}%")
         logger.info("=" * 50)
     
-    def _save_plant_status(self, plant_status: dict) -> bool:
-        """Save plant status to the plant tracker for automation"""
-        try:
-            success = self.plant_tracker.update_plant_status(plant_status)
-            if success:
-                logger.info(f"Plant status saved for {plant_status.get('plant_name', 'unknown')}")
-            else:
-                logger.warning("Failed to save plant status to tracker")
-            return success
-        except Exception as e:
-            logger.error(f"Failed to save plant status: {e}")
-            return False
     

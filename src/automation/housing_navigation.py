@@ -14,8 +14,9 @@ from config import config
 class HousingNavigationAutomation(AutomationBase):
     """Handles generic navigation to housing/castles in Wizard101"""
     
-    def __init__(self, ui_detector):
+    def __init__(self, ui_detector, house_type="red_barn_farm"):
         super().__init__(ui_detector)
+        self.house_type = house_type
     
     def execute(self) -> ActionResult:
         """Execute housing navigation automation workflow"""
@@ -47,8 +48,8 @@ class HousingNavigationAutomation(AutomationBase):
             if not result.success:
                 return result
             
-            # Wait for red barn farm to appear and click it
-            result = self.wait_and_click_red_barn_farm()
+            # Wait for the specified house to appear and click it
+            result = self.wait_and_click_house()
             if not result.success:
                 return result
             
@@ -68,6 +69,57 @@ class HousingNavigationAutomation(AutomationBase):
         except Exception as e:
             return ActionResult.failure_result("Housing navigation automation failed", error=e)
     
+    def execute_house_selection_only(self) -> ActionResult:
+        """Execute only house selection without navigating to front of house (for farming bot)"""
+        try:
+            logger.info("Starting house selection only automation")
+            
+            # Check if player is already in the house
+            result = self.check_if_already_in_house()
+            if not result.success:
+                return result
+            
+            # If we're already in house, just return success (no need to navigate to front)
+            if result.data and result.data.get('already_in_house', False):
+                logger.info("Player is already in house, no additional navigation needed")
+                return ActionResult.success_result("Player is already in house")
+            
+            # Press 'b' key to open housing menu
+            result = self.press_b_key()
+            if not result.success:
+                return result
+            
+            # Wait for housing navigation to appear and click it
+            result = self.wait_and_click_housing_nav()
+            if not result.success:
+                return result
+            
+            # Wait for castles to appear and click it
+            result = self.wait_and_click_castles()
+            if not result.success:
+                return result
+            
+            # Wait for the specified house to appear and click it
+            result = self.wait_and_click_house()
+            if not result.success:
+                return result
+            
+            # Handle equip/unequip logic for red barn farm
+            result = self.handle_equip_unequip()
+            if not result.success:
+                return result
+            
+            # Click go home button after confirming red barn farm is equipped
+            result = self.click_go_home()
+            if not result.success:
+                return result
+            
+            logger.info("House selection automation completed successfully")
+            return ActionResult.success_result("House selection automation completed successfully")
+            
+        except Exception as e:
+            return ActionResult.failure_result("House selection automation failed", error=e)
+    
     def press_b_key(self) -> ActionResult:
         """Press the 'b' key to open housing menu"""
         try:
@@ -77,7 +129,7 @@ class HousingNavigationAutomation(AutomationBase):
             pyautogui.press('b')
             
             # Wait a moment for the action to register
-            time.sleep(1.0)
+            time.sleep(0.3)
             
             logger.info("'b' key pressed successfully")
             return ActionResult.success_result("'b' key pressed successfully")
@@ -159,43 +211,112 @@ class HousingNavigationAutomation(AutomationBase):
         except Exception as e:
             return ActionResult.failure_result("Failed to wait for and click castles", error=e)
     
-    def wait_and_click_red_barn_farm(self, timeout: float = 30.0) -> ActionResult:
-        """Wait for red barn farm text to appear and click it"""
+    def wait_and_click_house(self, timeout: float = 30.0) -> ActionResult:
+        """Wait for the specified house text to appear and click it"""
         try:
-            logger.info("Waiting for red barn farm text to appear...")
+            logger.info(f"Waiting for {self.house_type} text to appear...")
             
-            # Define search criteria for red barn farm
-            red_barn_criteria = ElementSearchCriteria(
-                name="red_barn_farm",
+            # Get the appropriate template path based on house type
+            template_path = self._get_house_template_path()
+            if not template_path:
+                return ActionResult.failure_result(f"Unknown house type: {self.house_type}")
+            
+            # Define search criteria for the house with lower confidence threshold
+            # to handle background color variations (selected vs unselected state)
+            house_criteria = ElementSearchCriteria(
+                name=self.house_type,
                 element_type=ElementType.TEXT,
-                template_path=config.get_game_template_path(AssetPaths.GameTemplates.RED_BARN_FARM),
-                confidence_threshold=0.8,
+                template_path=template_path,
+                confidence_threshold=0.6,  # Reduced from 0.8 to handle background color variations
                 detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
-                metadata={"description": "Red barn farm text to click on"}
+                metadata={"description": f"{self.house_type} text to click on"}
             )
             
-            # Wait for the red barn farm text to appear
-            result = self.wait_for_element(red_barn_criteria, timeout=timeout, check_interval=2.0)
+            # Wait for the house text to appear
+            result = self.wait_for_element(house_criteria, timeout=timeout, check_interval=2.0)
             
             if not result.success:
-                logger.warning("Red barn farm text not found within timeout")
-                return ActionResult.failure_result("Red barn farm text not found within timeout")
+                logger.warning(f"{self.house_type} text not found within timeout")
+                # Try with even lower confidence threshold as fallback
+                logger.info(f"Trying fallback detection with lower confidence threshold...")
+                fallback_criteria = ElementSearchCriteria(
+                    name=f"{self.house_type}_fallback",
+                    element_type=ElementType.TEXT,
+                    template_path=template_path,
+                    confidence_threshold=0.4,  # Even lower threshold for fallback
+                    detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
+                    metadata={"description": f"{self.house_type} text fallback detection"}
+                )
+                
+                fallback_result = self.wait_for_element(fallback_criteria, timeout=10.0, check_interval=1.0)
+                if fallback_result.success:
+                    logger.info(f"{self.house_type} detected with fallback confidence threshold")
+                    # Update the criteria to use the fallback result
+                    house_criteria = fallback_criteria
+                else:
+                    return ActionResult.failure_result(f"{self.house_type} text not found even with fallback detection")
             
-            logger.info("Red barn farm text detected successfully")
+            logger.info(f"{self.house_type} text detected successfully")
             
-            # Click the red barn farm text
-            click_result = self.find_and_click(red_barn_criteria, wait_time=1.0, retries=3)
+            # Click the house text
+            click_result = self.find_and_click(house_criteria, wait_time=1.0, retries=3)
             
             if click_result.success:
-                logger.info("Red barn farm clicked successfully")
-                return ActionResult.success_result("Red barn farm clicked successfully")
+                logger.info(f"{self.house_type} clicked successfully")
+                return ActionResult.success_result(f"{self.house_type} clicked successfully")
             else:
-                logger.error("Failed to click red barn farm")
-                return ActionResult.failure_result("Failed to click red barn farm")
+                logger.error(f"Failed to click {self.house_type}")
+                return ActionResult.failure_result(f"Failed to click {self.house_type}")
                 
         except Exception as e:
-            logger.error(f"Failed to wait for and click red barn farm: {e}")
-            return ActionResult.failure_result("Failed to wait for and click red barn farm", error=e)
+            logger.error(f"Failed to wait for and click {self.house_type}: {e}")
+            return ActionResult.failure_result(f"Failed to wait for and click {self.house_type}", error=e)
+    
+    def _get_house_template_path(self) -> str:
+        """Get the template path for the specified house type"""
+        house_templates = {
+            "red_barn_farm": AssetPaths.GameTemplates.RED_BARN_FARM,
+            "wysteria_villa": AssetPaths.GameTemplates.WYSTERIA_VILLA
+        }
+        
+        if self.house_type in house_templates:
+            return config.get_game_template_path(house_templates[self.house_type])
+        
+        return None
+    
+    def test_house_detection(self, confidence_levels: list = [0.8, 0.6, 0.4, 0.2]) -> ActionResult:
+        """Test house detection with different confidence levels for debugging"""
+        try:
+            logger.info(f"Testing {self.house_type} detection with different confidence levels...")
+            
+            template_path = self._get_house_template_path()
+            if not template_path:
+                return ActionResult.failure_result(f"Unknown house type: {self.house_type}")
+            
+            for confidence in confidence_levels:
+                logger.info(f"Testing with confidence threshold: {confidence}")
+                
+                test_criteria = ElementSearchCriteria(
+                    name=f"{self.house_type}_test_{confidence}",
+                    element_type=ElementType.TEXT,
+                    template_path=template_path,
+                    confidence_threshold=confidence,
+                    detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
+                    metadata={"description": f"{self.house_type} test detection at {confidence}"}
+                )
+                
+                # Quick check without waiting
+                if self.ui_detector.is_element_present(test_criteria):
+                    logger.info(f"✓ {self.house_type} detected with confidence {confidence}")
+                    return ActionResult.success_result(f"House detected with confidence {confidence}", data={'confidence': confidence})
+                else:
+                    logger.info(f"✗ {self.house_type} not detected with confidence {confidence}")
+            
+            return ActionResult.failure_result(f"{self.house_type} not detected with any confidence level")
+            
+        except Exception as e:
+            logger.error(f"Failed to test house detection: {e}")
+            return ActionResult.failure_result("Failed to test house detection", error=e)
     
     def handle_equip_unequip(self, timeout: float = 10.0) -> ActionResult:
         """Handle equip/unequip logic for red barn farm"""
@@ -535,7 +656,7 @@ class HousingNavigationAutomation(AutomationBase):
             pyautogui.press('h')
             
             # Wait a moment for the action to register
-            time.sleep(1.0)
+            time.sleep(0.3)
             
             logger.info("'H' key pressed successfully - housing menu should be closed")
             return ActionResult.success_result("'H' key pressed successfully - housing menu closed")
