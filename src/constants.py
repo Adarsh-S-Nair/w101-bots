@@ -143,8 +143,11 @@ class AssetPaths:
         """Farming-specific template files"""
         FIRST_ENEMY = "first_enemy.png"
         SECOND_ENEMY = "second_enemy.png"
-        TROUBLED_WARRIOR = "troubled_warrior.png"
         FIRST_PLAYER = "first_player.png"
+
+        # Enemy templates
+        TROUBLED_WARRIOR = "troubled_warrior.png"
+        BURNING_HATE = "burning_hate.png"
         
         # Card templates
         EPIC = "epic.png"

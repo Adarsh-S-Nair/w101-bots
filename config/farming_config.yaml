@@ -21,8 +21,19 @@ enemies:
           cast:
             card: "ENCHANTED_METEOR_STRIKE"
             target: 0
-    # Add more enemy-specific settings here as needed
-    # e.g., health_threshold, preferred_spells, etc.
+  burning_hate:
+    name: "Burning Hate"
+    template: "BURNING_HATE"
+    strategy:
+      rounds:
+        - round: 1
+          enchantments:
+            - enchant: "EPIC"
+              card: "METEOR_STRIKE"
+          cast:
+            card: "ENCHANTED_METEOR_STRIKE"
+            target: 0
+
 
 # Farming behavior settings
 farming:

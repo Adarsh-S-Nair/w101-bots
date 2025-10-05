@@ -37,7 +37,7 @@ class TriviaAutomation(AutomationBase):
         self.execution_tracker = TriviaBotTracker()
     
     def is_time_to_run(self) -> bool:
-        """Check if it's time to run the trivia bot based on the 22-hour schedule"""
+        """Check if it's time to run the trivia bot based on the 20-hour schedule"""
         return self.execution_tracker.is_time_to_run()
     
     def get_next_run_time(self):

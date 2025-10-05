@@ -78,20 +78,18 @@ class BotExecutionTracker:
         }
         
         # Store only the current execution (clear any previous ones)
+        # Note: We do NOT save to file here - only save on successful completion
         self.tracking_data = {
             "executions": [execution_data],  # Only keep the current execution
             "last_execution": execution_data
         }
-        
-        # Save to file
-        self._save_tracking_data()
         
         logger.info(f"Started {self.bot_type} bot execution: {execution_id}")
         return execution_data
     
     def complete_execution(self, execution_id: str, success: bool = True, 
                           execution_summary: Optional[Dict[str, Any]] = None,
-                          next_run_interval_hours: float = 22.0) -> Dict[str, Any]:
+                          next_run_interval_hours: float = 20.0) -> Dict[str, Any]:
         """
         Record the completion of bot execution and calculate next run time
         
@@ -99,7 +97,7 @@ class BotExecutionTracker:
             execution_id: ID of the execution to complete
             success: Whether the execution was successful
             execution_summary: Summary of what was accomplished
-            next_run_interval_hours: Hours until next run (default 22.0 for trivia)
+            next_run_interval_hours: Hours until next run (default 20.0 for trivia)
             
         Returns:
             Dict containing completion info and next run time
@@ -134,8 +132,12 @@ class BotExecutionTracker:
             "next_run_time": next_run_time
         }
         
-        # Save to file
-        self._save_tracking_data()
+        # Only save to file if execution was successful
+        if success:
+            self._save_tracking_data()
+            logger.info(f"Saved tracking data for successful {self.bot_type} bot execution: {execution_id}")
+        else:
+            logger.info(f"Not saving tracking data for failed {self.bot_type} bot execution: {execution_id}")
         
         completion_info = {
             "execution_id": execution_id,
@@ -147,7 +149,8 @@ class BotExecutionTracker:
         
         status_text = "completed successfully" if success else "failed"
         logger.info(f"{self.bot_type} bot execution {status_text}: {execution_id}")
-        logger.info(f"Next {self.bot_type} bot run scheduled for: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        if success:
+            logger.info(f"Next {self.bot_type} bot run scheduled for: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         return completion_info
     
@@ -220,7 +223,7 @@ class BotExecutionTracker:
 
 
 class TriviaBotTracker(BotExecutionTracker):
-    """Specialized tracker for trivia bot with 22-hour intervals"""
+    """Specialized tracker for trivia bot with 20-hour intervals"""
     
     def __init__(self, tracking_dir: str = "bot_tracking"):
         super().__init__("trivia", tracking_dir)
@@ -246,7 +249,7 @@ class TriviaBotTracker(BotExecutionTracker):
             execution_id=execution_id,
             success=success,
             execution_summary=summary,
-            next_run_interval_hours=22
+            next_run_interval_hours=20
         )
 
 
@@ -343,8 +346,10 @@ class GardeningBotTracker(BotExecutionTracker):
             
             current_execution["execution_summary"]["plant_status_updates"].append(plant_status_with_timestamp)
             
-            # Save the updated data
-            return self._save_tracking_data()
+            # Note: We do NOT save to file here - only save on successful completion
+            # The plant status will be saved when complete_execution() is called with success=True
+            logger.info(f"Updated plant status in memory for {self.bot_type} execution")
+            return True
             
         except Exception as e:
             logger.error(f"Failed to update plant status in tracker: {e}")

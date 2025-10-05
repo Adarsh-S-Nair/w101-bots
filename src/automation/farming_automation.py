@@ -27,29 +27,49 @@ class FarmingAutomation(AutomationBase):
             target_world = self.farming_config.get("world_navigation", {}).get("target_world", "grizzleheim")
         
         self.world_navigation = WorldNavigationAutomation(ui_detector, target_world=target_world, farming_config=self.farming_config)
+        
+        # Fizzle detection tracking
+        self.previous_pip_count = 0
+        self.last_casted_round = None
     
     def execute(self) -> ActionResult:
-        """Execute farming automation workflow"""
+        """Execute farming automation workflow in continuous loop"""
         try:
-            logger.info("Starting farming automation - spinning in circle until enemy detected")
+            logger.info("Starting continuous farming automation")
+            battle_count = 0
+            
+            while True:
+                battle_count += 1
+                logger.info(f"=== BATTLE #{battle_count} ===")
+                logger.info("Spinning in circle until enemy detected...")
 
-            # Spin in a circle until we detect the first enemy
-            self._spin_until_enemy_detected()
-            
-            # After stopping spin, determine what type of enemy we're facing
-            enemy_data = self._detect_enemy_type()
-            if enemy_data:
-                enemy_name = enemy_data.get("name", "Unknown Enemy")
-                logger.info(f"Detected enemy: {enemy_name}")
+                # Reset fizzle tracking for new battle
+                self.previous_pip_count = 0
+                self.last_casted_round = None
+
+                # Spin in a circle until we detect the first enemy
+                self._spin_until_enemy_detected()
                 
-                # Execute battle strategy
-                self._execute_battle_strategy(enemy_data)
-            else:
-                logger.warning("Could not determine enemy type")
+                # After stopping spin, determine what type of enemy we're facing
+                enemy_data = self._detect_enemy_type()
+                if enemy_data:
+                    enemy_name = enemy_data.get("name", "Unknown Enemy")
+                    logger.info(f"Detected enemy: {enemy_name}")
+                    
+                    # Execute battle strategy
+                    self._execute_battle_strategy(enemy_data)
+                    logger.info(f"Battle #{battle_count} completed successfully")
+                else:
+                    logger.warning("Could not determine enemy type, continuing to next battle...")
+                
+                # Small delay before starting next battle
+                logger.info("Preparing for next battle...")
             
-            logger.info("Farming automation completed successfully")
-            return ActionResult.success_result("Farming automation completed successfully")
+        except KeyboardInterrupt:
+            logger.info("Farming automation stopped by user")
+            return ActionResult.success_result("Farming automation stopped by user")
         except Exception as e:
+            logger.error(f"Farming automation failed: {e}")
             return ActionResult.failure_result("Farming automation failed", error=e)
     
     def _spin_until_enemy_detected(self):
@@ -161,20 +181,20 @@ class FarmingAutomation(AutomationBase):
             # First, wait for the pass button to disappear (casting has started)
             logger.info("Waiting for casting phase to start...")
             while self._check_for_pass_button():
-                time.sleep(0.5)  # Check every 0.5 seconds
+                time.sleep(0.1)  # Check every 0.5 seconds
             
-            logger.info("Pass button disappeared - casting phase started")
+            logger.info("Casting phase started")
             
             # Then, wait for either pass button to reappear OR spellbook to appear (fight over)
             logger.info("Waiting for casting phase to complete...")
             while not self._check_for_pass_button() and not self._check_for_spellbook():
-                time.sleep(0.5)  # Check every 0.5 seconds
+                time.sleep(0.1)  # Check every 0.5 seconds
             
             if self._check_for_spellbook():
-                logger.info("Spellbook appeared - fight completed!")
+                logger.info("Fight completed!")
                 return "fight_completed"
             else:
-                logger.info("Pass button reappeared - round completed, back to card selection")
+                logger.info("Round completed, back to card selection")
                 return "round_completed"
             
         except Exception as e:
@@ -184,12 +204,6 @@ class FarmingAutomation(AutomationBase):
     def _check_for_pass_button(self) -> bool:
         """Check if the pass button is currently visible on screen"""
         try:
-            # Move mouse to top middle of screen to reset any hover effects
-            screen_width, screen_height = pyautogui.size()
-            top_middle_x = screen_width // 2
-            top_middle_y = 50
-            pyautogui.moveTo(top_middle_x, top_middle_y, duration=0.1)
-            
             # Get the pass button template path
             from config import config
             pass_path = config.get_farming_template_path(AssetPaths.FarmingTemplates.PASS)
@@ -214,12 +228,6 @@ class FarmingAutomation(AutomationBase):
     def _check_for_spellbook(self) -> bool:
         """Check if the spellbook is currently visible on screen (indicates fight is over)"""
         try:
-            # Move mouse to top middle of screen to reset any hover effects
-            screen_width, screen_height = pyautogui.size()
-            top_middle_x = screen_width // 2
-            top_middle_y = 50
-            pyautogui.moveTo(top_middle_x, top_middle_y, duration=0.1)
-            
             # Get the spellbook template path
             from config import config
             spellbook_path = config.get_game_template_path(AssetPaths.GameTemplates.SPELLBOOK)
@@ -259,8 +267,21 @@ class FarmingAutomation(AutomationBase):
             logger.info(f"Starting round {round_counter}")
             
             # Determine number of pips at the beginning of each round
-            pip_count = self._determine_pip_count()
-            logger.info(f"Current pip count: {pip_count}")
+            current_pip_count = self._determine_pip_count()
+            logger.info(f"Current pip count: {current_pip_count}")
+            
+            # Check for fizzle if we casted a spell in the previous round
+            if self.last_casted_round is not None and current_pip_count > self.previous_pip_count:
+                logger.warning(f"FIZZLED!")
+                logger.info("Retrying the most recent strategy round...")
+                self._retry_last_strategy_round(rounds)
+                # Reset fizzle tracking
+                self.last_casted_round = None
+                self.previous_pip_count = current_pip_count
+                continue
+            
+            # Update pip tracking
+            self.previous_pip_count = current_pip_count
             
             # Check if second enemy is present at the beginning of each round
             if not self._check_for_second_enemy():
@@ -281,6 +302,9 @@ class FarmingAutomation(AutomationBase):
                 # Execute the configured strategy rounds
                 for round_num, round_data in enumerate(rounds, 1):
                     logger.info(f"Executing strategy round {round_num}")
+                    
+                    # Track this as the last casted round for fizzle detection
+                    self.last_casted_round = round_data
                     
                     # Handle enchantments at the beginning of each round
                     enchantments = round_data.get("enchantments", [])
@@ -307,6 +331,29 @@ class FarmingAutomation(AutomationBase):
                 # Strategy completed, break out of the waiting loop
                 break
     
+    def _retry_last_strategy_round(self, rounds: list):
+        """Retry the most recent strategy round when a fizzle is detected"""
+        if not self.last_casted_round:
+            logger.warning("No last casted round to retry")
+            return
+        
+        logger.info("Retrying the most recent strategy round due to fizzle...")
+        logger.info("Note: Only retrying the cast, enchantments were already applied")
+        
+        # Only retry the casting part - enchantments were already successfully applied
+        cast_data = self.last_casted_round.get("cast", {})
+        if cast_data:
+            logger.info(f"Re-casting for fizzle retry: {cast_data}")
+            self._process_cast(cast_data)
+        else:
+            logger.warning("No cast data found in last strategy round")
+        
+        # Wait for the round to complete after retry casting
+        result = self._wait_for_round_completion()
+        if result == "fight_completed":
+            logger.info("Fight completed after fizzle retry - ending battle")
+            return
+    
     def _determine_pip_count(self) -> int:
         """Determine the number of pips the player currently has"""
         try:
@@ -329,30 +376,46 @@ class FarmingAutomation(AutomationBase):
                 logger.info(f"Found first player at {first_player_element.center}")
                 
                 # Start at the first pip position (45px right, 50px down from first player)
-                pip_x = first_player_element.center.x + 45
-                pip_y = first_player_element.center.y + 50
+                pip_x = first_player_element.center.x + 60
+                pip_y = first_player_element.center.y + 45
                 
-                # Loop through 5 pip positions
-                for pip_num in range(1, 5):
-                    time.sleep(3)
+                total_pips = 0
+                pip_num = 1
+                
+                # Keep checking pips until we find one that's not 'e' or 'f'
+                while True:
+                    time.sleep(0.1)
                     # Move mouse to current pip position
                     pyautogui.moveTo(pip_x, pip_y, duration=0.1)
                     
                     # Get the color of the current pip
                     pip_color = pyautogui.pixel(pip_x, pip_y)
                     pip_hex = f"#{pip_color[0]:02x}{pip_color[1]:02x}{pip_color[2]:02x}"
-                    logger.info(f"Color of {pip_num}{self._get_ordinal_suffix(pip_num)} pip: {pip_hex}")
                     
+                    # Analyze the color to determine pip type
+                    pip_type = self._analyze_pip_color(pip_color)
+                    
+                    
+                    
+                    # Check if this is a valid pip
+                    if pip_type == "regular":
+                        # Regular pip - counts as 1
+                        total_pips += 1
+                        # logger.info(f"Regular pip detected - total pips now: {total_pips}")
+                    elif pip_type == "power":
+                        # Power pip - counts as 2
+                        total_pips += 2
+                        # logger.info(f"Power pip detected - total pips now: {total_pips}")
+                    else:
+                        # Not a pip - stop counting
+                        # logger.info(f"Non-pip color detected ({pip_type}) - stopping pip count at {total_pips}")
+                        break
+                    # logger.info(f"Color of {pip_num}{self._get_ordinal_suffix(pip_num)} pip: {pip_hex} (RGB: {pip_color}) - Type: {pip_type} - Pip count: {total_pips}")
                     # Move to next pip position (30px to the right)
-                    pip_x += 28
-                
-                # Sleep for 5 seconds
-                time.sleep(3)
-                logger.info("Finished 5-second sleep")
-                
-                # TODO: Implement pip counting logic here
-                # For now, just return 0 as requested
-                return 0
+                    pip_x += 30
+                    pip_num += 1
+
+                return total_pips
             else:
                 logger.info("Could not find first player on screen")
                 return 0
@@ -360,6 +423,51 @@ class FarmingAutomation(AutomationBase):
         except Exception as e:
             logger.error(f"Error determining pip count: {e}")
             return 0
+    
+    def _analyze_pip_color(self, rgb_color) -> str:
+        """
+        Analyze RGB color to determine if it's a regular pip, power pip, or not a pip.
+        
+        Regular pips: Mostly white with hint of yellow (high R, high G, medium B)
+        Power pips: Bright yellow (high R, medium-high G, low B)
+        Non-pips: Colors that don't match either pattern
+        """
+        r, g, b = rgb_color
+        
+        # Calculate color characteristics
+        total_brightness = r + g + b
+        
+        # Basic brightness check - must be reasonably bright
+        if total_brightness < 500:  # Too dark to be a pip
+            return "non_pip"
+        
+        # Check if it's bright enough in red and green (pips are always bright in these)
+        if r < 200 or g < 150:  # Too dark in red or green
+            return "non_pip"
+        
+        # Analyze based on blue component and overall characteristics
+        # Regular pips: high blue (more white/light)
+        # Power pips: low blue (more yellow)
+        
+        if b >= 120:  # High blue - regular pip (white with hint of yellow)
+            # Additional check: regular pips should be very bright overall
+            if total_brightness >= 600 and r >= 220 and g >= 200:
+                return "regular"
+            else:
+                return "non_pip"  # Too dark overall despite high blue
+        elif b >= 80:  # Medium blue - need to check if it's bright enough for power pip
+            # For medium blue, check if it's bright enough to be a power pip
+            if r >= 220 and g >= 180:
+                return "power"
+            else:
+                return "regular"
+        elif b >= 50:  # Low blue - power pip (bright yellow)
+            return "power"
+        else:  # Very low blue - check if still bright enough
+            if r >= 200 and g >= 150:
+                return "power"
+            else:
+                return "non_pip"
     
     def _get_ordinal_suffix(self, num: int) -> str:
         """Get the ordinal suffix for a number (1st, 2nd, 3rd, etc.)"""
@@ -384,12 +492,10 @@ class FarmingAutomation(AutomationBase):
             # Click the enchantment type first
             if self._click_card(enchant_type):
                 logger.info(f"Successfully clicked {enchant_type}")
-                time.sleep(0.5)  # Small delay between clicks
                 
                 # Then click the card to enchant
                 if self._click_card(card_name):
                     logger.info(f"Successfully clicked {card_name}")
-                    time.sleep(0.5)  # Small delay after enchantment
                 else:
                     logger.error(f"Failed to click {card_name}")
             else:
@@ -421,13 +527,14 @@ class FarmingAutomation(AutomationBase):
             logger.error(f"Failed to click {card_name}")
     
     def _click_card(self, card_name: str) -> bool:
-        """Click a card by its name using template matching"""
+        """Click a card by its name using template matching with timeout (like trivia/gardening bots)"""
         try:
             # Move mouse to top middle of screen to reset card sizes before searching
-            screen_width, screen_height = pyautogui.size()
-            top_middle_x = screen_width // 2
-            top_middle_y = 50  # Near the top of the screen
-            pyautogui.moveTo(top_middle_x, top_middle_y, duration=0.1)
+            logger.debug(f"MOVING MOUSE TO TOP MIDDLE - About to search for card: {card_name}")
+            self._move_mouse_to_top_middle()
+
+            # Small delay to ensure UI has settled
+            time.sleep(0.2)
             
             # Get the template filename from the constant
             template_filename = getattr(AssetPaths.FarmingTemplates, card_name, None)
@@ -439,65 +546,85 @@ class FarmingAutomation(AutomationBase):
             from config import config
             template_path = config.get_farming_template_path(template_filename)
             
-            # Find the card on screen
-            card_element = self.ui_detector.find_element(
-                ElementSearchCriteria(
-                    name=card_name,
-                    element_type=ElementType.BUTTON,
-                    template_path=template_path,
-                    confidence_threshold=0.8
-                )
+            # Create search criteria
+            card_criteria = ElementSearchCriteria(
+                name=card_name,
+                element_type=ElementType.BUTTON,
+                template_path=template_path,
+                confidence_threshold=0.8
             )
             
-            if card_element:
-                # Move mouse to the card coordinates before clicking
-                pyautogui.moveTo(card_element.center.x, card_element.center.y, duration=0.1)
+            # Wait for the card to appear with timeout (like trivia/gardening bots)
+            logger.info(f"Waiting for card '{card_name}' to appear...")
+            wait_result = self.wait_for_element(card_criteria, timeout=10.0, check_interval=0.5)
+            
+            if wait_result.success:
+                card_element = wait_result.data["element"]
+                logger.info(f"Found {card_name} at {card_element.center} after {wait_result.data['wait_time']:.1f}s")
                 
-                # Click the card
-                pyautogui.click(card_element.center.x, card_element.center.y)
-                logger.debug(f"Clicked {card_name} at {card_element.center}")
-                return True
+                # Use the reliable click_element method from base class (it will move mouse to element and click)
+                click_result = self.click_element(card_element)
+                if click_result.success:
+                    logger.info(f"Successfully clicked {card_name} at {card_element.center}")
+                    
+                    # Move mouse to top middle after clicking card
+                    self._move_mouse_to_top_middle()                    
+                    return True
+                else:
+                    logger.error(f"Failed to click {card_name}: {click_result.message}")
+                    return False
             else:
-                logger.warning(f"Could not find {card_name} on screen")
+                logger.warning(f"Could not find {card_name} within timeout period")
                 return False
                 
         except Exception as e:
             logger.error(f"Error clicking {card_name}: {e}")
             return False
     
+    def _move_mouse_to_top_middle(self):
+        """Move mouse to top middle of screen to reset hover effects"""
+        screen_width, screen_height = pyautogui.size()
+        top_middle_x = screen_width // 2
+        top_middle_y = 50  # Near the top of the screen
+        pyautogui.moveTo(top_middle_x, top_middle_y, duration=0.1)
+    
     def _click_pass_button(self) -> bool:
-        """Click the pass button to skip a round"""
+        """Click the pass button to skip a round (with timeout like trivia/gardening bots)"""
         try:
-            # Move mouse to top middle of screen to reset any hover effects
-            screen_width, screen_height = pyautogui.size()
-            top_middle_x = screen_width // 2
-            top_middle_y = 50
-            pyautogui.moveTo(top_middle_x, top_middle_y, duration=0.1)
-            
             # Get the pass button template path
             from config import config
             pass_path = config.get_farming_template_path(AssetPaths.FarmingTemplates.PASS)
             
-            # Find the pass button on screen
-            pass_element = self.ui_detector.find_element(
-                ElementSearchCriteria(
-                    name="pass_button",
-                    element_type=ElementType.BUTTON,
-                    template_path=pass_path,
-                    confidence_threshold=0.8
-                )
+            # Create search criteria
+            pass_criteria = ElementSearchCriteria(
+                name="pass_button",
+                element_type=ElementType.BUTTON,
+                template_path=pass_path,
+                confidence_threshold=0.8
             )
             
-            if pass_element:
-                # Move mouse to the pass button coordinates before clicking
-                pyautogui.moveTo(pass_element.center.x, pass_element.center.y, duration=0.1)
+            # Wait for the pass button to appear with timeout
+            logger.info("Waiting for pass button to appear...")
+            wait_result = self.wait_for_element(pass_criteria, timeout=5.0, check_interval=0.5)
+            
+            if wait_result.success:
+                pass_element = wait_result.data["element"]
+                logger.info(f"Found pass button at {pass_element.center} after {wait_result.data['wait_time']:.1f}s")
                 
-                # Click the pass button
-                pyautogui.click(pass_element.center.x, pass_element.center.y)
-                logger.debug(f"Clicked pass button at {pass_element.center}")
-                return True
+                # Use the reliable click_element method from base class
+                click_result = self.click_element(pass_element)
+                if click_result.success:
+                    logger.info(f"Successfully clicked pass button at {pass_element.center}")
+                    
+                    # Move mouse to top middle after clicking pass button
+                    self._move_mouse_to_top_middle()
+                    
+                    return True
+                else:
+                    logger.error(f"Failed to click pass button: {click_result.message}")
+                    return False
             else:
-                logger.warning("Could not find pass button on screen")
+                logger.warning("Could not find pass button within timeout period")
                 return False
                 
         except Exception as e:
