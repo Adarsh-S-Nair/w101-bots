@@ -33,7 +33,18 @@ enemies:
           cast:
             card: "ENCHANTED_METEOR_STRIKE"
             target: 0
-
+  ghulture:
+    name: "Ghulture"
+    template: "GHULTURE"
+    strategy:
+      rounds:
+        - round: 1
+          enchantments:
+            - enchant: "EPIC"
+              card: "METEOR_STRIKE"
+          cast:
+            card: "ENCHANTED_METEOR_STRIKE"
+            target: 0
 
 # Farming behavior settings
 farming:

@@ -572,7 +572,8 @@ class TriviaAutomation(AutomationBase):
             logger.info(f"Starting completion of trivia: {trivia_name}")
             question_count = 0
             
-            while True:
+            max_questions = 12  # Limit to 12 questions maximum
+            while question_count < max_questions:
                 question_count += 1
                 logger.info(f"Processing question {question_count} for {trivia_name}")
                 
@@ -614,17 +615,29 @@ class TriviaAutomation(AutomationBase):
                 
                 logger.info(f"Successfully submitted answer for question {question_count}\n")
                 
-                # Wait for trivia banner to appear after submission
+                # First wait for trivia banner to disappear after submission
+                disappear_result = self._wait_for_trivia_banner_to_disappear()
+                if not disappear_result.success:
+                    logger.warning(f"Trivia banner did not disappear after question {question_count}, but continuing...")
+                
+                # Then wait for trivia banner to appear for next question (short timeout)
                 banner_result = self._wait_for_trivia_banner_after_submit()
                 if not banner_result.success:
-                    logger.info(f"Trivia banner not found after question {question_count} - trivia completed, starting reward claiming")
-                    # Start reward claiming flow
-                    reward_result = self._handle_reward_claiming()
-                    if reward_result.success:
-                        logger.info("Reward claiming completed successfully")
-                    else:
-                        logger.warning(f"Reward claiming failed: {reward_result.message}")
+                    logger.info(f"Trivia banner not found after question {question_count} - trivia completed")
                     break
+                # If banner appears, continue to next iteration of the loop
+            
+            # Check if we reached the maximum questions limit
+            if question_count >= max_questions:
+                logger.info(f"Reached maximum questions limit ({max_questions}) for {trivia_name}")
+            
+            # After the loop ends, handle reward claiming
+            logger.info(f"Trivia {trivia_name} completed with {question_count} questions - starting reward claiming")
+            reward_result = self._handle_reward_claiming()
+            if reward_result.success:
+                logger.info("Reward claiming completed successfully")
+            else:
+                logger.warning(f"Reward claiming failed: {reward_result.message}")
             
             logger.info(f"Completed trivia {trivia_name} with {question_count} questions")
             return ActionResult.success_result(f"Completed trivia {trivia_name} with {question_count} questions")
@@ -686,7 +699,7 @@ class TriviaAutomation(AutomationBase):
                     
                     # Copy to clipboard
                     pyautogui.hotkey('ctrl', 'c')
-                    time.sleep(0.2)  # Small delay for clipboard
+                    time.sleep(0.5)  # Delay for clipboard
                     
                     # Get text from clipboard
                     question_text = pyperclip.paste()
@@ -798,10 +811,11 @@ class TriviaAutomation(AutomationBase):
     def _copy_text_from_position(self, x, y):
         """Move mouse to position, triple-click, and copy text to clipboard"""
         pyautogui.moveTo(x, y)
+        time.sleep(0.2)  # Delay after moving mouse
         pyautogui.tripleClick()
-        time.sleep(0.3)
+        time.sleep(0.6)  # Delay after selection
         pyautogui.hotkey('ctrl', 'c')
-        time.sleep(0.3)
+        time.sleep(0.6)  # Delay after copying
         return pyperclip.paste().strip()
 
     def _click_answer_checkbox(self, answer_x, answer_y, answer_text):
@@ -859,8 +873,8 @@ class TriviaAutomation(AutomationBase):
             third_answer_text = self._copy_text_from_position(third_answer_x, third_answer_y)
             
             # Check if we need additional adjustment for third answer
-            if third_answer_text == '':
-                logger.info("Third answer position is off - copied question or first answer, adjusting Y position by additional 20px")
+            if third_answer_text == '' or third_answer_text == 'Next Question!':
+                logger.info("Third answer position is off - copied question, first answer, or 'Next Question!' button, adjusting Y position by additional 20px")
                 y_adjustment += 20
                 third_answer_y = question_y + ANSWER_POSITIONS['third']['y'] + y_adjustment
                 third_answer_text = self._copy_text_from_position(third_answer_x, third_answer_y)
@@ -1022,13 +1036,29 @@ class TriviaAutomation(AutomationBase):
             logger.error(f"Error waiting for submit answer button: {e}")
             return ActionResult.failure_result(f"Failed to wait for submit answer button: {e}", error=e)
     
-    def _wait_for_trivia_banner_after_submit(self) -> ActionResult:
-        """Wait for trivia banner to appear after submitting an answer (2 second timeout)"""
+    def _wait_for_trivia_banner_to_disappear(self) -> ActionResult:
+        """Wait for trivia banner to disappear after clicking submit (3 second timeout)"""
         try:
+            logger.info("Waiting for trivia banner to disappear after submit...")
+            criteria = ElementSearchCriteria(
+                name="Trivia Banner",
+                element_type=ElementType.IMAGE,
+                template_path=AssetPaths.TriviaTemplates.TRIVIA_BANNER,
+                confidence_threshold=0.8
+            )
+            return self.wait_for_element_to_disappear(criteria, timeout=3.0)
+        except Exception as e:
+            logger.error(f"Error waiting for trivia banner to disappear: {e}")
+            return ActionResult.failure_result(f"Failed to wait for trivia banner to disappear: {e}", error=e)
+
+    def _wait_for_trivia_banner_after_submit(self) -> ActionResult:
+        """Wait for trivia banner to appear after submitting an answer (3 second timeout)"""
+        try:
+            logger.info("Waiting for trivia banner to appear for next question...")
             return self._wait_for_trivia_button(
                 "Trivia Banner",
                 AssetPaths.TriviaTemplates.TRIVIA_BANNER,
-                timeout=2.0,
+                timeout=3.0,
                 post_wait_delay=0.5
             )
         except Exception as e:

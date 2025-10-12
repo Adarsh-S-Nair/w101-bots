@@ -20,6 +20,7 @@ class FarmingAutomation(AutomationBase):
     def __init__(self, ui_detector, target_world=None):
         super().__init__(ui_detector)
         self.farming_config = self._load_farming_config()
+        self.spells_database = self._load_spells_database()
         self.movement_automation = MovementAutomation(ui_detector, config=self.farming_config)
         
         # Get target world from farming config if not provided
@@ -31,6 +32,9 @@ class FarmingAutomation(AutomationBase):
         # Fizzle detection tracking
         self.previous_pip_count = 0
         self.last_casted_round = None
+        
+        # Current pip count tracking
+        self.current_pip_count = 0
     
     def execute(self) -> ActionResult:
         """Execute farming automation workflow in continuous loop"""
@@ -260,32 +264,94 @@ class FarmingAutomation(AutomationBase):
         
         logger.info(f"Executing battle strategy with {len(rounds)} round(s)")
         
-        # Keep looping until second enemy appears, then execute strategy
-        round_counter = 0
+        # Validate that all spells in the strategy exist in the spells database
+        if not self.validate_strategy_spells(strategy):
+            logger.error("Strategy contains unknown spells, cannot execute battle")
+            return
+        
+        # Calculate and log strategy pip cost
+        total_pip_cost = self.calculate_strategy_pip_cost(strategy)
+        logger.info(f"Strategy total pip cost: {total_pip_cost}")
+        
+        # Track which strategy rounds we've successfully executed
+        executed_strategy_rounds = 0
+        battle_round_counter = 0
+        second_enemy_detected = False
+        
+        # Main battle loop - continues until battle is complete
         while True:
-            round_counter += 1
-            logger.info(f"Starting round {round_counter}")
+            battle_round_counter += 1
+            logger.info(f"Starting battle round {battle_round_counter}")
+            
+            # Check for second enemy only until first detection
+            if not second_enemy_detected:
+                logger.info("Checking for second enemy...")
+                if not self._check_for_second_enemy():
+                    logger.info("Second enemy not present, passing this round")
+                    if self._click_pass_button():
+                        logger.info("Successfully passed round")
+                        # Wait for the round to complete
+                        result = self._wait_for_round_completion()
+                        if result == "fight_completed":
+                            logger.info("Fight completed during pass round - ending battle")
+                            break
+                        continue
+                    else:
+                        logger.error("Failed to click pass button")
+                        break
+                else:
+                    logger.info("Second enemy detected! Will execute strategy from now on")
+                    second_enemy_detected = True
             
             # Determine number of pips at the beginning of each round
-            current_pip_count = self._determine_pip_count()
-            logger.info(f"Current pip count: {current_pip_count}")
+            self.current_pip_count = self._determine_pip_count()
+            logger.info(f"Current pip count: {self.current_pip_count}")
             
             # Check for fizzle if we casted a spell in the previous round
-            if self.last_casted_round is not None and current_pip_count > self.previous_pip_count:
+            if self.last_casted_round is not None and self.current_pip_count > self.previous_pip_count:
                 logger.warning(f"FIZZLED!")
                 logger.info("Retrying the most recent strategy round...")
-                self._retry_last_strategy_round(rounds)
-                # Reset fizzle tracking
+                fight_completed = self._retry_last_strategy_round(rounds)
+                
+                # If fight was completed during fizzle retry, end the battle
+                if fight_completed:
+                    logger.info("Battle ended during fizzle retry")
+                    break
+                
+                # Reset fizzle tracking and continue to next round
                 self.last_casted_round = None
-                self.previous_pip_count = current_pip_count
+                self.previous_pip_count = self.current_pip_count
                 continue
             
             # Update pip tracking
-            self.previous_pip_count = current_pip_count
+            self.previous_pip_count = self.current_pip_count
             
-            # Check if second enemy is present at the beginning of each round
-            if not self._check_for_second_enemy():
-                logger.info("Second enemy not present, passing this round")
+            # Execute strategy round (second enemy was already detected)
+            logger.info("Executing strategy round")
+            
+            # Try to execute a strategy round
+            success = self._execute_strategy_round(rounds, executed_strategy_rounds)
+            
+            if success:
+                executed_strategy_rounds += 1
+                logger.info(f"Successfully executed strategy round {executed_strategy_rounds}")
+                
+                # Wait for the round to complete
+                result = self._wait_for_round_completion()
+                if result == "fight_completed":
+                    logger.info("Fight completed after strategy execution - ending battle")
+                    break
+                elif result == "round_completed":
+                    logger.info("Round completed, continuing to next round")
+                    continue
+                else:
+                    logger.error(f"Unexpected round completion result: {result}")
+                    break
+            else:
+                logger.warning("Failed to execute strategy round (likely insufficient pips)")
+                logger.info("Passing this round and continuing to next round")
+                
+                # Try to pass the round
                 if self._click_pass_button():
                     logger.info("Successfully passed round")
                     # Wait for the round to complete
@@ -297,45 +363,55 @@ class FarmingAutomation(AutomationBase):
                 else:
                     logger.error("Failed to click pass button")
                     break
-            else:
-                logger.info("Second enemy detected! Executing battle strategy")
-                # Execute the configured strategy rounds
-                for round_num, round_data in enumerate(rounds, 1):
-                    logger.info(f"Executing strategy round {round_num}")
-                    
-                    # Track this as the last casted round for fizzle detection
-                    self.last_casted_round = round_data
-                    
-                    # Handle enchantments at the beginning of each round
-                    enchantments = round_data.get("enchantments", [])
-                    if enchantments:
-                        logger.info(f"Processing {len(enchantments)} enchantment(s) for strategy round {round_num}")
-                        self._process_enchantments(enchantments)
-                    else:
-                        logger.info(f"No enchantments for strategy round {round_num}")
-                    
-                    # Handle casting after enchantments
-                    cast_data = round_data.get("cast", {})
-                    if cast_data:
-                        logger.info(f"Cast data for strategy round {round_num}: {cast_data}")
-                        self._process_cast(cast_data)
-                    else:
-                        logger.info(f"No cast data for strategy round {round_num}")
-                    
-                    # Wait for the round to complete after casting
-                    result = self._wait_for_round_completion()
-                    if result == "fight_completed":
-                        logger.info("Fight completed after strategy execution - ending battle")
-                        return
-                
-                # Strategy completed, break out of the waiting loop
-                break
     
-    def _retry_last_strategy_round(self, rounds: list):
+    def _execute_strategy_round(self, rounds: list, executed_rounds: int) -> bool:
+        """Execute a strategy round based on how many have been successfully executed"""
+        try:
+            # If we've executed all configured rounds, retry the last one
+            if executed_rounds >= len(rounds):
+                logger.info(f"All {len(rounds)} strategy rounds executed, retrying the last one")
+                round_data = rounds[-1]  # Last round
+                round_num = len(rounds)
+            else:
+                # Execute the next round in sequence
+                round_data = rounds[executed_rounds]
+                round_num = executed_rounds + 1
+            
+            logger.info(f"Executing strategy round {round_num}")
+            
+            # Track this as the last casted round for fizzle detection
+            self.last_casted_round = round_data
+            
+            # Handle enchantments at the beginning of each round
+            enchantments = round_data.get("enchantments", [])
+            if enchantments:
+                logger.info(f"Processing {len(enchantments)} enchantment(s) for strategy round {round_num}")
+                self._process_enchantments(enchantments)
+            else:
+                logger.info(f"No enchantments for strategy round {round_num}")
+            
+            # Handle casting after enchantments
+            cast_data = round_data.get("cast", {})
+            if cast_data:
+                logger.info(f"Cast data for strategy round {round_num}: {cast_data}")
+                cast_success = self._process_cast(cast_data)
+                if not cast_success:
+                    logger.warning(f"Failed to cast spell in strategy round {round_num}")
+                    return False
+            else:
+                logger.info(f"No cast data for strategy round {round_num}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error executing strategy round: {e}")
+            return False
+    
+    def _retry_last_strategy_round(self, rounds: list) -> bool:
         """Retry the most recent strategy round when a fizzle is detected"""
         if not self.last_casted_round:
             logger.warning("No last casted round to retry")
-            return
+            return False
         
         logger.info("Retrying the most recent strategy round due to fizzle...")
         logger.info("Note: Only retrying the cast, enchantments were already applied")
@@ -352,7 +428,10 @@ class FarmingAutomation(AutomationBase):
         result = self._wait_for_round_completion()
         if result == "fight_completed":
             logger.info("Fight completed after fizzle retry - ending battle")
-            return
+            return True  # Fight completed
+        else:
+            logger.warning(f"Battle still active after fizzle retry (result: {result})")
+            return False  # Battle continues
     
     def _determine_pip_count(self) -> int:
         """Determine the number of pips the player currently has"""
@@ -384,7 +463,6 @@ class FarmingAutomation(AutomationBase):
                 
                 # Keep checking pips until we find one that's not 'e' or 'f'
                 while True:
-                    time.sleep(0.1)
                     # Move mouse to current pip position
                     pyautogui.moveTo(pip_x, pip_y, duration=0.1)
                     
@@ -501,16 +579,24 @@ class FarmingAutomation(AutomationBase):
             else:
                 logger.error(f"Failed to click {enchant_type}")
     
-    def _process_cast(self, cast_data: dict):
+    def _process_cast(self, cast_data: dict) -> bool:
         """Process casting a spell card"""
         card_name = cast_data.get("card")
         target = cast_data.get("target")
         
         if not card_name:
             logger.warning(f"Invalid cast data: {cast_data}")
-            return
+            return False
         
         logger.info(f"Casting {card_name} on target {target}")
+        
+        # Check if we have enough pips for this spell
+        required_pips = self.get_spell_info(card_name).get("pip_cost", 0)
+        
+        if self.current_pip_count < required_pips:
+            logger.warning(f"Not enough pips to cast {card_name}! Need {required_pips}, have {self.current_pip_count}")
+            logger.info("Cannot cast due to insufficient pips")
+            return False
         
         # Click the cast card
         if self._click_card(card_name):
@@ -523,8 +609,10 @@ class FarmingAutomation(AutomationBase):
                 logger.info(f"Target {target}: Would click enemy position {target}")
             else:
                 logger.warning(f"Unknown target value: {target}")
+            return True
         else:
             logger.error(f"Failed to click {card_name}")
+            return False
     
     def _click_card(self, card_name: str) -> bool:
         """Click a card by its name using template matching with timeout (like trivia/gardening bots)"""
@@ -556,7 +644,7 @@ class FarmingAutomation(AutomationBase):
             
             # Wait for the card to appear with timeout (like trivia/gardening bots)
             logger.info(f"Waiting for card '{card_name}' to appear...")
-            wait_result = self.wait_for_element(card_criteria, timeout=10.0, check_interval=0.5)
+            wait_result = self.wait_for_element(card_criteria, timeout=10.0, check_interval=0.1)
             
             if wait_result.success:
                 card_element = wait_result.data["element"]
@@ -650,3 +738,85 @@ class FarmingAutomation(AutomationBase):
         except yaml.YAMLError as e:
             logger.error(f"Error parsing config/farming_config.yaml: {e}")
             return {}
+    
+    def _load_spells_database(self) -> dict:
+        """Load spells database from spells_database.yaml"""
+        try:
+            with open('config/spells_database.yaml', 'r', encoding='utf-8') as file:
+                return yaml.safe_load(file) or {}
+        except FileNotFoundError:
+            logger.warning("config/spells_database.yaml not found, using empty database")
+            return {}
+        except yaml.YAMLError as e:
+            logger.error(f"Error parsing config/spells_database.yaml: {e}")
+            return {}
+    
+    def get_spell_info(self, spell_name: str) -> dict:
+        """Get spell information from the spells database"""
+        spells = self.spells_database.get("spells", {})
+        return spells.get(spell_name, {})
+    
+    def get_template_constant(self, spell_name: str) -> str:
+        """Get the template constant for a spell (same as spell name)"""
+        return spell_name
+    
+    def validate_strategy_spells(self, strategy: dict) -> bool:
+        """Validate that all spells in a strategy exist in the spells database"""
+        rounds = strategy.get("rounds", [])
+        
+        for round_data in rounds:
+            # Check enchantments
+            enchantments = round_data.get("enchantments", [])
+            for enchantment in enchantments:
+                enchant_spell = enchantment.get("enchant")
+                card_spell = enchantment.get("card")
+                
+                if enchant_spell and not self.get_spell_info(enchant_spell):
+                    logger.warning(f"Unknown enchantment spell: {enchant_spell}")
+                    return False
+                    
+                if card_spell and not self.get_spell_info(card_spell):
+                    logger.warning(f"Unknown card spell: {card_spell}")
+                    return False
+            
+            # Check cast spell
+            cast_data = round_data.get("cast", {})
+            cast_spell = cast_data.get("card")
+            if cast_spell and not self.get_spell_info(cast_spell):
+                logger.warning(f"Unknown cast spell: {cast_spell}")
+                return False
+        
+        return True
+    
+    def calculate_strategy_pip_cost(self, strategy: dict) -> int:
+        """Calculate the total pip cost for a strategy"""
+        rounds = strategy.get("rounds", [])
+        total_cost = 0
+        
+        for round_data in rounds:
+            round_cost = 0
+            
+            # Calculate enchantment costs
+            enchantments = round_data.get("enchantments", [])
+            for enchantment in enchantments:
+                enchant_spell = enchantment.get("enchant")
+                card_spell = enchantment.get("card")
+                
+                if enchant_spell:
+                    enchant_info = self.get_spell_info(enchant_spell)
+                    round_cost += enchant_info.get("pip_cost", 0)
+                    
+                if card_spell:
+                    card_info = self.get_spell_info(card_spell)
+                    round_cost += card_info.get("pip_cost", 0)
+            
+            # Calculate cast cost
+            cast_data = round_data.get("cast", {})
+            cast_spell = cast_data.get("card")
+            if cast_spell:
+                cast_info = self.get_spell_info(cast_spell)
+                round_cost += cast_info.get("pip_cost", 0)
+            
+            total_cost += round_cost
+        
+        return total_cost

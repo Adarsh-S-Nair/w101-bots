@@ -1,0 +1,12 @@
+spells:
+  EPIC:
+    name: "Epic"
+    pip_cost: 0
+  
+  METEOR_STRIKE:
+    name: "Meteor Strike"
+    pip_cost: 4
+  
+  ENCHANTED_METEOR_STRIKE:
+    name: "Enchanted Meteor Strike"
+    pip_cost: 4

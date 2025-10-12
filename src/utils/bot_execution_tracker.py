@@ -45,6 +45,16 @@ class BotExecutionTracker:
             logger.error(f"Error loading tracking data for {self.bot_type} bot: {e}")
             return {}
     
+    def reload_tracking_data(self) -> bool:
+        """Reload tracking data from file (useful when reusing tracker instance)"""
+        try:
+            self.tracking_data = self._load_tracking_data()
+            logger.info(f"Reloaded tracking data for {self.bot_type} bot")
+            return True
+        except Exception as e:
+            logger.error(f"Error reloading tracking data for {self.bot_type} bot: {e}")
+            return False
+    
     def _save_tracking_data(self) -> bool:
         """Save tracking data to JSON file"""
         try:
@@ -77,14 +87,14 @@ class BotExecutionTracker:
             "additional_data": additional_data or {}
         }
         
-        # Store only the current execution (clear any previous ones)
+        # Preserve previous executions and add the current one
         # Note: We do NOT save to file here - only save on successful completion
-        self.tracking_data = {
-            "executions": [execution_data],  # Only keep the current execution
-            "last_execution": execution_data
-        }
+        existing_executions = self.tracking_data.get("executions", [])
+        # Don't add current execution yet - it will be added when completed
+        self.tracking_data["executions"] = existing_executions  # Keep previous executions
+        self.tracking_data["last_execution"] = execution_data
         
-        logger.info(f"Started {self.bot_type} bot execution: {execution_id}")
+        logger.info(f"Started {self.bot_type} bot execution: {execution_id} (keeping {len(existing_executions)} previous executions)")
         return execution_data
     
     def complete_execution(self, execution_id: str, success: bool = True, 
@@ -105,15 +115,11 @@ class BotExecutionTracker:
         end_time = datetime.now()
         next_run_time = end_time + timedelta(hours=next_run_interval_hours)
         
-        # Find the execution record to complete
-        execution_to_complete = None
-        for execution in self.tracking_data.get("executions", []):
-            if execution.get("execution_id") == execution_id:
-                execution_to_complete = execution
-                break
+        # Get the execution record to complete from last_execution
+        execution_to_complete = self.tracking_data.get("last_execution")
         
-        if not execution_to_complete:
-            logger.error(f"Execution ID {execution_id} not found in tracking data")
+        if not execution_to_complete or execution_to_complete.get("execution_id") != execution_id:
+            logger.error(f"Execution ID {execution_id} not found in tracking data or doesn't match last execution")
             return {}
         
         # Complete the execution
@@ -125,12 +131,17 @@ class BotExecutionTracker:
         execution_to_complete["execution_summary"] = execution_summary or {}
         execution_to_complete["next_run_time"] = next_run_time
         
-        # Rewrite the entire tracking data with only the latest execution
+        # Add completed execution to the list (keeping history)
+        existing_executions = self.tracking_data.get("executions", [])
+        existing_executions.append(execution_to_complete)
+        
         self.tracking_data = {
-            "executions": [execution_to_complete],  # Only keep the latest execution
+            "executions": existing_executions,
             "last_execution": execution_to_complete,
             "next_run_time": next_run_time
         }
+        
+        logger.info(f"Completed execution {execution_id}. Total executions in history: {len(existing_executions)}")
         
         # Only save to file if execution was successful
         if success:
@@ -368,11 +379,34 @@ class GardeningBotTracker(BotExecutionTracker):
         try:
             all_updates = []
             
+            executions = self.tracking_data.get("executions", [])
+            logger.debug(f"Found {len(executions)} executions in tracking data")
+            
             # Get plant status updates from all executions
-            for execution in self.tracking_data.get("executions", []):
+            for execution in executions:
                 execution_summary = execution.get("execution_summary", {})
+                
+                # Check for plant_status_updates array (newer format)
                 plant_updates = execution_summary.get("plant_status_updates", [])
+                if plant_updates:
+                    logger.debug(f"Found {len(plant_updates)} plant_status_updates in execution")
                 all_updates.extend(plant_updates)
+                
+                # Also check for plant_data directly (for backward compatibility)
+                plant_data = execution_summary.get("plant_data")
+                if plant_data and isinstance(plant_data, dict):
+                    logger.debug(f"Found plant_data in execution: {plant_data.get('current_stage', 'N/A')}")
+                    # Add timestamp if not present
+                    if "timestamp" not in plant_data:
+                        plant_data_with_timestamp = {
+                            **plant_data,
+                            "timestamp": execution.get("end_time", execution.get("start_time", ""))
+                        }
+                    else:
+                        plant_data_with_timestamp = plant_data
+                    all_updates.append(plant_data_with_timestamp)
+            
+            logger.debug(f"Total plant status updates found: {len(all_updates)}")
             
             # Sort by timestamp (most recent first)
             all_updates.sort(key=lambda x: x.get("timestamp", ""), reverse=True)

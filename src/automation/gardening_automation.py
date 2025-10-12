@@ -25,6 +25,9 @@ class GardeningAutomation(AutomationBase):
     
     def execute(self) -> ActionResult:
         """Execute gardening automation workflow"""
+        # Reload tracking data to get the latest info from previous runs
+        self.execution_tracker.reload_tracking_data()
+        
         # Start tracking execution
         execution_data = self.execution_tracker.start_execution()
         execution_id = execution_data["execution_id"]
@@ -73,7 +76,7 @@ class GardeningAutomation(AutomationBase):
 
             # Update plant status only after successful navigation/workflow
             logger.info("Updating plant status at end of gardening run...")
-            status_result = self.update_plant_status()
+            status_result = self.update_plant_status(actions_performed=actions_performed)
             if status_result.success and status_result.data:
                 plant_data = status_result.data
                 # Update plant status in tracker
@@ -672,6 +675,9 @@ class GardeningAutomation(AutomationBase):
                 if click_result.success:
                     logger.info("Successfully clicked on seeds gardening menu")
                     time.sleep(1.0)  # Wait for seeds menu to open
+                    
+                    # Reset mouse after category click to avoid tooltip
+                    self._reset_mouse_after_category_click()
                 else:
                     logger.warning("Failed to click on seeds gardening menu")
                     return ActionResult.failure_result("Failed to click on seeds gardening menu")
@@ -751,11 +757,17 @@ class GardeningAutomation(AutomationBase):
         try:
             logger.info("Starting plant all seeds process...")
             
+            # Reset mouse position and wait for game to stabilize
+            logger.info("Resetting mouse position and waiting 3 seconds...")
+            self._reset_mouse_after_category_click()
+            time.sleep(3.0)
+            
             # Navigate to house front and back to garden for planting remaining seeds
             nav_result = self._navigate_house_front_and_back_to_garden()
             if not nav_result.success:
                 logger.warning("Failed to navigate to house front and back to garden")
                 return ActionResult.failure_result("Failed to navigate to house front and back to garden")
+            
             
             # Press 'g' to open the gardening menu again
             logger.info("Opening gardening menu again...")
@@ -814,42 +826,27 @@ class GardeningAutomation(AutomationBase):
                 logger.warning("Could not find plant_all spell")
                 return ActionResult.failure_result("Could not find plant_all spell")
             
-            # Now look for and click on the planted couch potato
-            logger.info("Looking for planted couch potato...")
-            planted_potato_criteria = ElementSearchCriteria(
-                name="planted_couch_potato",
-                element_type=ElementType.IMAGE,
-                template_path=config.get_gardening_template_path(AssetPaths.GardeningTemplates.PLANTED_COUCH_POTATO),
-                confidence_threshold=0.8,
-                detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
-                metadata={"description": "Planted couch potato to click"}
-            )
+            # Get configured coordinates for planted potato click
+            potato_config = self.garden_config.get('planted_potato_click', {})
+            click_x = potato_config.get('x', 960)  # Default to center
+            click_y = potato_config.get('y', 540)  # Default to center
             
-            # Find and click the planted couch potato
-            planted_potato_element = self.ui_detector.find_element(planted_potato_criteria)
-            if planted_potato_element:
-                logger.info("Found planted couch potato, positioning mouse and wiggling...")
-                
-                # Get the center coordinates of the element
-                center_coords = planted_potato_element.center
-                
-                # Move mouse to the center position
-                pyautogui.moveTo(center_coords.x, center_coords.y)
-                time.sleep(0.2)  # Brief pause
-                
-                # Wiggle the mouse slightly to ensure cursor locks onto the plant
-                wiggle_result = self._wiggle_mouse(center_coords.x, center_coords.y)
-                if not wiggle_result.success:
-                    logger.warning("Mouse wiggle failed, but continuing with click")
-                
-                logger.info("Mouse positioned and wiggled, clicking on planted couch potato...")
-                pyautogui.click(center_coords.x, center_coords.y)
-                time.sleep(1.0)  # Wait for action to complete
-                
-                logger.info("Successfully clicked on planted couch potato")
-            else:
-                logger.warning("Could not find planted couch potato")
-                return ActionResult.failure_result("Could not find planted couch potato")
+            logger.info(f"Moving mouse to planted couch potato at configured coordinates ({click_x}, {click_y})...")
+            
+            # Move mouse to the configured position
+            pyautogui.moveTo(click_x, click_y)
+            time.sleep(0.2)  # Brief pause
+            
+            # Wiggle the mouse slightly to ensure cursor locks onto the plant
+            wiggle_result = self._wiggle_mouse(click_x, click_y)
+            if not wiggle_result.success:
+                logger.warning("Mouse wiggle failed, but continuing with click")
+            
+            logger.info("Mouse positioned and wiggled, clicking on planted couch potato...")
+            pyautogui.click(click_x, click_y)
+            time.sleep(1.0)  # Wait for action to complete
+            
+            logger.info("Successfully clicked on planted couch potato")
             
             # Finally, look for and click on the confirm plant all button
             logger.info("Looking for confirm plant all button...")
@@ -884,16 +881,16 @@ class GardeningAutomation(AutomationBase):
             logger.error(f"Failed to plant all seeds: {e}")
             return ActionResult.failure_result("Failed to plant all seeds", error=e)
     
-    def update_plant_status(self) -> ActionResult:
+    def update_plant_status(self, actions_performed: list = None) -> ActionResult:
         """Update plant status by navigating to garden, opening menu, and hovering over plant location"""
         try:
             logger.info("Starting plant status update process...")
             
-            # # Step 1: Navigate to house front and back to garden
-            # nav_result = self._navigate_house_front_and_back_to_garden()
-            # if not nav_result.success:
-            #     logger.warning("Failed to navigate to house front and back to garden")
-            #     return ActionResult.failure_result("Failed to navigate to house front and back to garden")
+            # Step 1: Navigate to house front and back to garden
+            nav_result = self._navigate_house_front_and_back_to_garden()
+            if not nav_result.success:
+                logger.warning("Failed to navigate to house front and back to garden")
+                return ActionResult.failure_result("Failed to navigate to house front and back to garden")
             
             # Step 2: Press 'g' to open the gardening menu
             logger.info("Opening gardening menu...")
@@ -926,7 +923,7 @@ class GardeningAutomation(AutomationBase):
             
             # Extract plant status using template matching (no OCR needed)
             logger.info("Starting plant status extraction with template matching...")
-            plant_status = self._extract_plant_status_with_template_matching()
+            plant_status = self._extract_plant_status_with_template_matching(actions_performed=actions_performed)
             if plant_status:
                 self._log_plant_status(plant_status)
                 logger.info("Successfully extracted plant status using template matching")
@@ -965,7 +962,7 @@ class GardeningAutomation(AutomationBase):
             logger.error(f"Failed to wiggle mouse: {e}")
             return ActionResult.failure_result("Failed to wiggle mouse", error=e)
     
-    def _extract_plant_status_with_template_matching(self) -> dict:
+    def _extract_plant_status_with_template_matching(self, actions_performed: list = None) -> dict:
         """Extract plant status using template matching (no OCR needed)"""
         try:
             import yaml
@@ -989,8 +986,48 @@ class GardeningAutomation(AutomationBase):
             # Calculate growth modifiers
             modifiers = self._calculate_growth_modifiers(likes, plant_data['growth_modifiers'])
             
-            # For now, assume mature stage (can be enhanced with stage detection later)
-            current_stage = 'mature'
+            # Determine current stage based on actions performed
+            if actions_performed and ("harvest" in actions_performed or "replant" in actions_performed):
+                # Just harvested and replanted, so plants are seedlings
+                current_stage = 'seedling'
+                logger.info("Plants were just replanted, setting stage to 'seedling'")
+            else:
+                # Try to get the last known stage from tracker and advance it
+                plant_status_history = self.execution_tracker.get_plant_status_history(limit=1)
+                logger.info(f"Retrieved plant status history: {plant_status_history}")
+                if plant_status_history and len(plant_status_history) > 0:
+                    last_status = plant_status_history[0]
+                    last_stage = last_status.get('current_stage', 'seedling')
+                    logger.info(f"Last known stage from tracker: '{last_stage}'")
+                    
+                    # Advance the stage: seedling -> young -> mature -> elder
+                    # Note: When plants reach elder, we harvest them (handled by actions_performed check above)
+                    if last_stage == 'seedling':
+                        current_stage = 'young'
+                        logger.info("Advancing stage from 'seedling' to 'young'")
+                    elif last_stage == 'young':
+                        current_stage = 'mature'
+                        logger.info("Advancing stage from 'young' to 'mature'")
+                    elif last_stage == 'mature':
+                        # After mature comes elder - but elder plants get harvested immediately,
+                        # which would have been caught by the if clause above.
+                        # If we're here, plants are still mature (not elder yet).
+                        # However, the user expects that mature -> elder happens quickly and we harvest,
+                        # so we treat this as a transition back to seedling.
+                        current_stage = 'seedling'
+                        logger.info("Stage was 'mature', advancing to 'seedling' (plants reached elder and were harvested)")
+                    elif last_stage == 'elder':
+                        # If somehow we had elder stage but didn't harvest, reset to seedling
+                        current_stage = 'seedling'
+                        logger.warning("Stage was 'elder' but no harvest detected, resetting to 'seedling'")
+                    else:
+                        # Unknown stage, default to seedling
+                        current_stage = 'seedling'
+                        logger.warning(f"Unknown stage '{last_stage}', defaulting to 'seedling'")
+                else:
+                    # No history, default to seedling
+                    current_stage = 'seedling'
+                    logger.info("No plant history found, defaulting to 'seedling'")
             
             # Determine next stage and time to next stage
             next_stage, time_to_next = self._calculate_next_stage(current_stage, plant_data['stages'], modifiers)

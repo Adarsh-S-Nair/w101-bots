@@ -13,6 +13,12 @@ spell_casting:
   # Time to wait after casting a spell (in seconds) - allow for game lag
   wait_after_casting: 20
 
+# Planted potato click configuration (for Plant All spell)
+planted_potato_click:
+  # Coordinates to click on a planted potato
+  x: 2043    # X coordinate
+  y: 573    # Y coordinate
+
 # Movement pattern to get to your garden
 go_to_garden:
   - key: "w"          # Move forward

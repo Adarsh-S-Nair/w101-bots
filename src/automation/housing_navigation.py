@@ -572,7 +572,7 @@ class HousingNavigationAutomation(AutomationBase):
             return ActionResult.failure_result("Failed to click place object button", error=e)
     
     def wait_and_click_house_start(self, timeout: float = 15.0) -> ActionResult:
-        """Wait for house_start to appear and click it"""
+        """Wait for house_start to appear and click it with retry logic"""
         try:
             logger.info("Waiting for house_start to appear...")
             
@@ -586,7 +586,17 @@ class HousingNavigationAutomation(AutomationBase):
                 metadata={"description": "House start button"}
             )
             
-            # Wait for the house_start to appear
+            # Define search criteria for outside_button (to verify click success)
+            outside_button_criteria = ElementSearchCriteria(
+                name="outside_button",
+                element_type=ElementType.BUTTON,
+                template_path=config.get_game_template_path(AssetPaths.GameTemplates.OUTSIDE_BUTTON),
+                confidence_threshold=0.8,
+                detection_methods=[DetectionMethod.TEMPLATE, DetectionMethod.VISUAL],
+                metadata={"description": "Outside button"}
+            )
+            
+            # Wait for the house_start to appear initially
             result = self.wait_for_element(house_start_criteria, timeout=timeout, check_interval=2.0)
             
             if not result.success:
@@ -595,15 +605,42 @@ class HousingNavigationAutomation(AutomationBase):
             
             logger.info("House start button detected successfully")
             
-            # Click the house_start button
-            click_result = self.find_and_click(house_start_criteria, wait_time=1.0, retries=3)
-            
-            if click_result.success:
-                logger.info("House start button clicked successfully")
-                return ActionResult.success_result("House start button clicked successfully")
-            else:
-                logger.error("Failed to click house start button")
-                return ActionResult.failure_result("Failed to click house start button")
+            # Retry logic: try up to 3 times
+            max_retries = 3
+            for attempt in range(1, max_retries + 1):
+                logger.info(f"Attempt {attempt}/{max_retries}: Clicking house start button...")
+                
+                # Click the house_start button
+                click_result = self.find_and_click(house_start_criteria, wait_time=1.0, retries=1)
+                
+                if not click_result.success:
+                    logger.warning(f"Failed to click house start button on attempt {attempt}")
+                    if attempt < max_retries:
+                        logger.info("Moving mouse up 50 pixels and waiting 5 seconds before retry...")
+                        current_x, current_y = pyautogui.position()
+                        pyautogui.moveTo(current_x, current_y - 50)
+                        time.sleep(5.0)
+                        continue
+                    else:
+                        return ActionResult.failure_result("Failed to click house start button after all retries")
+                
+                # Wait 1 second and check for outside_button
+                logger.info("Waiting 1 second to check if outside button appears...")
+                time.sleep(1.0)
+                
+                if self.ui_detector.is_element_present(outside_button_criteria):
+                    logger.info(f"Success! Outside button appeared after attempt {attempt}")
+                    return ActionResult.success_result("House start button clicked successfully")
+                else:
+                    logger.warning(f"Outside button not found after attempt {attempt} - button may have been grayed out")
+                    if attempt < max_retries:
+                        logger.info("Moving mouse up 50 pixels and waiting 5 seconds before retry...")
+                        current_x, current_y = pyautogui.position()
+                        pyautogui.moveTo(current_x, current_y - 50)
+                        time.sleep(5.0)
+                    else:
+                        logger.error("Failed to get outside button to appear after all retries")
+                        return ActionResult.failure_result("Failed to navigate to house start: Outside button not found within timeout")
                 
         except Exception as e:
             logger.error(f"Failed to wait for and click house start button: {e}")

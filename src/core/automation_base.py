@@ -151,9 +151,6 @@ class AutomationBase(ABC):
             pyautogui.click()
             logger.debug(f"Click performed at ({element.center.x}, {element.center.y})")
             
-            # Add a small delay after clicking to allow UI to respond
-            time.sleep(0.5)
-            
             return ActionResult.success_result(
                 f"Successfully clicked '{element.name}'",
                 data={"coordinates": element.center, "confidence": element.confidence}

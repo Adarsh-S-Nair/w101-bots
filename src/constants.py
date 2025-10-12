@@ -148,6 +148,7 @@ class AssetPaths:
         # Enemy templates
         TROUBLED_WARRIOR = "troubled_warrior.png"
         BURNING_HATE = "burning_hate.png"
+        GHULTURE = "ghulture.png"
         
         # Card templates
         EPIC = "epic.png"
