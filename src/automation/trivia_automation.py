@@ -577,19 +577,45 @@ class TriviaAutomation(AutomationBase):
                 question_count += 1
                 logger.info(f"Processing question {question_count} for {trivia_name}")
                 
-                # Extract question text using clipboard
-                result = self._extract_trivia_content()
-                if not result.success:
-                    logger.warning(f"Failed to extract question {question_count}: {result.message}")
+                # Extract question text using clipboard with retry logic
+                question_extracted = False
+                max_retries = 5
+                retry_count = 0
+                
+                while not question_extracted and retry_count < max_retries:
+                    retry_count += 1
+                    logger.info(f"Attempting to extract question {question_count} (attempt {retry_count}/{max_retries})")
+                    
+                    result = self._extract_trivia_content()
+                    if not result.success:
+                        logger.warning(f"Failed to extract question {question_count} on attempt {retry_count}: {result.message}")
+                        if retry_count < max_retries:
+                            logger.info(f"Sleeping for 1 second before retry {retry_count + 1}...")
+                            time.sleep(1.0)
+                        continue
+                    
+                    question_text = result.data.get('question_text', 'N/A')
+                    
+                    # Check if we got a valid question (not empty, not "N/A", not just whitespace)
+                    if question_text and question_text != 'N/A' and len(question_text.strip()) > 0:
+                        logger.info(f"Question {question_count}: {question_text}")
+                        question_extracted = True
+                    else:
+                        logger.warning(f"Invalid question text extracted on attempt {retry_count}: '{question_text}'")
+                        if retry_count < max_retries:
+                            logger.info(f"Sleeping for 1 second before retry {retry_count + 1}...")
+                            time.sleep(1.0)
+                        continue
+                
+                # If we couldn't extract a valid question after all retries
+                if not question_extracted:
+                    logger.warning(f"Failed to extract valid question {question_count} after {max_retries} attempts")
                     # Check if we've reached the end of the trivia
                     banner_result = self._check_trivia_banner_present()
                     if not banner_result.success:
                         logger.info(f"Trivia {trivia_name} appears to be complete (no more questions)")
                         break
                     continue
-                
-                question_text = result.data.get('question_text', 'N/A')
-                logger.info(f"Question {question_count}: {question_text}")
                 
                 # Match question to answer in database
                 answer = self._find_answer_for_question(trivia_name, question_text)
@@ -706,10 +732,16 @@ class TriviaAutomation(AutomationBase):
                     # Clean up any newline characters at the end
                     question_text = question_text.strip()
                     
-                    return ActionResult.success_result("Question text extracted", data={
-                        'question_position': (center.x, question_y),
-                        'question_text': question_text
-                    })
+                    # Check if we got a valid question text (not empty and not just whitespace)
+                    if question_text and len(question_text.strip()) > 0:
+                        return ActionResult.success_result("Question text extracted", data={
+                            'question_position': (center.x, question_y),
+                            'question_text': question_text
+                        })
+                    else:
+                        logger.warning(f"Empty question text extracted on attempt {attempt}, retrying...")
+                        time.sleep(1)
+                        continue
                 else:
                     logger.info(f"Trivia banner not found on attempt {attempt}, waiting 1 second...")
                     time.sleep(1)

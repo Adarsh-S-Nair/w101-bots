@@ -278,7 +278,9 @@ class GardeningAutomation(AutomationBase):
                     return select_spell_result
 
                 # Move mouse to configured coordinates and wait (for testing)
-                self._position_mouse_for_spell_casting()
+                # First spell waits longer (40s), subsequent spells wait shorter (5s)
+                is_first_spell = (index == 0)
+                self._position_mouse_for_spell_casting(is_first_spell=is_first_spell)
 
                 # Close the gardening menu after each step (except the last one)
                 if not is_last_step:
@@ -389,14 +391,16 @@ class GardeningAutomation(AutomationBase):
             logger.error(f"Failed during spell selection: {e}")
             return ActionResult.failure_result("Failed during spell selection", error=e)
 
-    def _position_mouse_for_spell_casting(self):
+    def _position_mouse_for_spell_casting(self, is_first_spell: bool = False):
         """Move mouse to configured coordinates, click to cast, then wait for post-cast lag."""
         try:
             spell_config = self.garden_config.get('spell_casting', {})
             target_x = spell_config.get('target_x', 960)  # Default to center
             target_y = spell_config.get('target_y', 540)  # Default to center
             wait_time = spell_config.get('wait_after_positioning', 60)
-            wait_after_cast = spell_config.get('wait_after_casting', 50)
+            
+            # Use 40 seconds for first spell, 5 seconds for subsequent spells
+            wait_after_cast = 40 if is_first_spell else 5
             
             logger.info(f"Moving mouse naturally to spell casting position at ({target_x}, {target_y}) and waiting {wait_time} seconds before casting...")
             # Move mouse naturally over 1 second instead of teleporting
