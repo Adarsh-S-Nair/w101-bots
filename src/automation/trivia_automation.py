@@ -85,6 +85,7 @@ class TriviaAutomation(AutomationBase):
         self.screenshot_manager = ScreenshotManager()
         self.trivia_database = self._load_trivia_database()
         self.execution_tracker = TriviaBotTracker()
+        self.current_question_count = 0
     
     def is_time_to_run(self) -> bool:
         """Check if it's time to run the trivia bot based on the 20-hour schedule"""
@@ -131,10 +132,10 @@ class TriviaAutomation(AutomationBase):
         
         if action == "wait_disappear":
             logger.info(f"Waiting for {name} to disappear...")
-            return self.wait_for_element_to_disappear(criteria, timeout=timeout, check_interval=0.5)
+            return self.wait_for_element_to_disappear(criteria, timeout=timeout, check_interval=0.1)
             
         logger.info(f"Waiting for {name} to appear...")
-        result = self.wait_for_element(criteria, timeout=timeout, check_interval=0.5)
+        result = self.wait_for_element(criteria, timeout=timeout, check_interval=0.1)
         
         if not result.success:
             logger.warning(f"{name} did not appear within timeout period")
@@ -143,9 +144,29 @@ class TriviaAutomation(AutomationBase):
         logger.info(f"{name} found")
         
         if action == "click":
-            click_result = self.find_and_click(criteria, wait_time=1.0, retries=2)
+            # Special handling for Submit Button to click further left
+            if element_key == "SUBMIT_BUTTON":
+                # Get element first to calculate custom position
+                element = self.ui_detector.find_element(criteria)
+                if element:
+                    center = element.center
+                    # Move 50 pixels to the left of center (or even more if needed)
+                    # The template is only the right side, so center is already biased right
+                    target_x = center.x - 50
+                    target_y = center.y
+                    
+                    pyautogui.moveTo(target_x, target_y)
+                    time.sleep(0.1)
+                    pyautogui.click()
+                    
+                    post_delay = kwargs.get("post_click_delay", config_data.get("post_click_delay", 0.2))
+                    if post_delay > 0:
+                        time.sleep(post_delay)
+                    return ActionResult.success_result(f"{name} clicked successfully at offset position")
+            
+            click_result = self.find_and_click(criteria, wait_time=0.2, retries=2)
             if click_result.success:
-                post_delay = kwargs.get("post_click_delay", config_data.get("post_click_delay", 1.0))
+                post_delay = kwargs.get("post_click_delay", config_data.get("post_click_delay", 0.2))
                 if post_delay > 0:
                     time.sleep(post_delay)
                 return ActionResult.success_result(f"{name} clicked successfully")
@@ -204,7 +225,7 @@ class TriviaAutomation(AutomationBase):
                     logger.info(f"Completed trivia: {result.data['trivia_name']}. Total completed: {len(completed_trivias)}")
                 
                 # Wait a bit before next attempt
-                time.sleep(2.0)
+                time.sleep(0.5)
             
             logger.info(f"Trivia automation completed successfully. Total trivias completed: {len(completed_trivias)}")
             
@@ -282,7 +303,7 @@ class TriviaAutomation(AutomationBase):
             
             # Wait for browser to open and load
             logger.info("Waiting for browser to initialize...")
-            time.sleep(1.0)
+            time.sleep(0.5)
             
             return ActionResult.success_result("Browser opened successfully")
             
@@ -319,11 +340,11 @@ class TriviaAutomation(AutomationBase):
             
             # Click on address bar (Ctrl+L)
             pyautogui.hotkey('ctrl', 'l')
-            time.sleep(0.5)
+            time.sleep(0.1)
             
             # Type the URL
             pyautogui.write(trivia_url)
-            time.sleep(0.5)
+            time.sleep(0.1)
             
             # Press Enter to navigate
             pyautogui.press('enter')
@@ -331,7 +352,7 @@ class TriviaAutomation(AutomationBase):
             logger.info(f"Navigated to: {trivia_url}")
             
             # Wait for page to load and take screenshot
-            time.sleep(2)
+            time.sleep(1.0)
             screenshot = self.screenshot_manager.take_screenshot()
             if screenshot is not None:
                 self.screenshot_manager.save_screenshot(screenshot, "trivia_page_loaded")
@@ -427,13 +448,13 @@ class TriviaAutomation(AutomationBase):
             
             # Clear the field using Ctrl+A and Delete
             pyautogui.hotkey('ctrl', 'a')  # Select all text
-            time.sleep(0.2)
+            time.sleep(0.1)
             pyautogui.press('delete')  # Delete selected text
-            time.sleep(0.2)
+            time.sleep(0.1)
             
             # Type the username with visible typing
-            pyautogui.write(username, interval=0.05)  # 50ms between keystrokes
-            time.sleep(0.5)
+            pyautogui.write(username, interval=0.005)  # Fast typing
+            time.sleep(0.2)
             
             logger.info("Username entered successfully")
             
@@ -469,20 +490,20 @@ class TriviaAutomation(AutomationBase):
             
             # Clear the password field
             pyautogui.hotkey('ctrl', 'a')  # Select all text
-            time.sleep(0.2)
+            time.sleep(0.1)
             pyautogui.press('delete')  # Delete selected text
-            time.sleep(0.2)
+            time.sleep(0.1)
             
             # Type the password with visible typing
-            pyautogui.write(password, interval=0.05)  # 50ms between keystrokes
-            time.sleep(0.5)
+            pyautogui.write(password, interval=0.005)  # Fast typing
+            time.sleep(0.2)
             
             logger.info("Password entered successfully")
             
             # Press Enter to submit login form
             logger.info("Pressing Enter to submit login form...")
             pyautogui.press('enter')
-            time.sleep(1.0)  # Wait for login to process
+            time.sleep(0.5)  # Wait for login to process
             
             logger.info("Login form submitted")
             return ActionResult.success_result("Password entered and login form submitted")
@@ -587,29 +608,47 @@ class TriviaAutomation(AutomationBase):
                     retry_count += 1
                     logger.info(f"Attempting to extract question {question_count} (attempt {retry_count}/{max_retries})")
                     
-                    result = self._extract_trivia_content()
+                    result = self._extract_trivia_content(question_count)
+                    
+                    # Special check: If extraction failed because we found the reward button, stop immediately
+                    if not result.success and "Trivia completed" in result.message:
+                        logger.info("Trivia completion detected during question extraction")
+                        question_extracted = False # Ensure loop breaks correctly
+                        break 
+
                     if not result.success:
                         logger.warning(f"Failed to extract question {question_count} on attempt {retry_count}: {result.message}")
                         if retry_count < max_retries:
-                            logger.info(f"Sleeping for 1 second before retry {retry_count + 1}...")
-                            time.sleep(1.0)
+                            logger.info(f"Sleeping for 0.5 second before retry {retry_count + 1}...")
+                            time.sleep(0.5)
                         continue
                     
                     question_text = result.data.get('question_text', 'N/A')
                     
                     # Check if we got a valid question (not empty, not "N/A", not just whitespace)
                     if question_text and question_text != 'N/A' and len(question_text.strip()) > 0:
+                        # Clean up question text if it captured the first answer (newline present)
+                        if '\n' in question_text:
+                            question_text = question_text.split('\n')[0].strip()
+                        if '\r' in question_text:
+                            question_text = question_text.split('\r')[0].strip()
+                            
                         logger.info(f"Question {question_count}: {question_text}")
                         question_extracted = True
                     else:
                         logger.warning(f"Invalid question text extracted on attempt {retry_count}: '{question_text}'")
                         if retry_count < max_retries:
-                            logger.info(f"Sleeping for 1 second before retry {retry_count + 1}...")
-                            time.sleep(1.0)
+                            logger.info(f"Sleeping for 0.5 second before retry {retry_count + 1}...")
+                            time.sleep(0.5)
                         continue
                 
                 # If we couldn't extract a valid question after all retries
                 if not question_extracted:
+                    # Check if it was because of completion
+                    if "Trivia completed" in result.message:
+                        logger.info("Trivia completed confirmed")
+                        break
+                        
                     logger.warning(f"Failed to extract valid question {question_count} after {max_retries} attempts")
                     # Check if we've reached the end of the trivia
                     banner_result = self._check_trivia_banner_present()
@@ -627,6 +666,11 @@ class TriviaAutomation(AutomationBase):
                     continue
                 
                 logger.info(f"Answer: {answer}")
+                
+                # Wait for answers to populate (they load one by one)
+                # The animation takes a moment, and reading too early results in empty text
+                logger.info("Waiting for answer choices to fully load...")
+                time.sleep(1.0)
                 
                 # Find and click the correct answer option
                 question_position = result.data.get('question_position', (0, 0))
@@ -656,6 +700,13 @@ class TriviaAutomation(AutomationBase):
                     logger.info("12 questions completed. Expecting reward page...")
                     break
                 
+                # Add a delay to allow the next question to load
+                logger.info("Waiting for transition...")
+                time.sleep(1.0)
+                
+                # We used to check for reward button here, but now we rely strictly on count
+                # to avoid false positives.
+            
             # Check if we reached the maximum questions limit
             if question_count >= max_questions:
                 logger.info(f"Reached maximum questions limit ({max_questions}) for {trivia_name}")
@@ -685,9 +736,10 @@ class TriviaAutomation(AutomationBase):
     
     
     
-    def _extract_trivia_content(self) -> ActionResult:
+    def _extract_trivia_content(self, current_question_num: int = 0) -> ActionResult:
         """Extract question from the trivia page using template detection and mouse positioning"""
         try:
+            self.current_question_count = current_question_num
             
             # Wait for trivia banner to appear with retry logic
             max_attempts = 15  # 15 seconds max wait time
@@ -816,11 +868,11 @@ class TriviaAutomation(AutomationBase):
     def _copy_text_from_position(self, x, y):
         """Move mouse to position, triple-click, and copy text to clipboard"""
         pyautogui.moveTo(x, y)
-        time.sleep(0.2)  # Delay after moving mouse
+        time.sleep(0.1)  # Delay after moving mouse
         pyautogui.tripleClick()
-        time.sleep(0.2)  # Delay after selection
+        time.sleep(0.1)  # Delay after selection
         pyautogui.hotkey('ctrl', 'c')
-        time.sleep(0.2)  # Delay after copying
+        time.sleep(0.1)  # Delay after copying
         return pyperclip.paste().strip()
 
     def _click_answer_checkbox(self, answer_x, answer_y, answer_text):
@@ -857,7 +909,7 @@ class TriviaAutomation(AutomationBase):
                 # Special Handling: Check for offsets based on specific keys
                 
                 # Case 1: First answer offset (Question wrapping pushes everything down)
-                if key == 'first' and answer_text == '':
+                if key == 'first' and (answer_text == '' or answer_text == 'Next Question!'):
                     logger.info("First answer position is off - copied question/empty instead of answer, adjusting Y position by 30px")
                     offset = 30
                     current_y_adjustment += offset
