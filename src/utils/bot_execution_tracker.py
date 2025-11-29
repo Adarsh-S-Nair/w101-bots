@@ -255,13 +255,73 @@ class TriviaBotTracker(BotExecutionTracker):
         """
         summary = execution_summary or {}
         summary["trivias_completed"] = trivia_count
-        
-        return super().complete_execution(
-            execution_id=execution_id,
-            success=success,
-            execution_summary=summary,
-            next_run_interval_hours=20
-        )
+
+        # Gather current execution (started earlier)
+        current_exec = self.tracking_data.get("last_execution")
+        if not current_exec or current_exec.get("execution_id") != execution_id:
+            logger.error(f"Execution ID {execution_id} not found in tracking data or doesn't match last execution")
+            return {}
+
+        # Compute end and next run times
+        end_time = datetime.now()
+        start_time = current_exec.get("start_time")
+        duration_td = (end_time - start_time) if isinstance(start_time, datetime) else None
+        duration_seconds = duration_td.total_seconds() if duration_td else 0.0
+        duration_formatted = str(duration_td).split('.')[0] if duration_td else "0:00:00"
+
+        next_run_interval_hours = 20.0
+        next_run_time = end_time + timedelta(hours=next_run_interval_hours)
+
+        # Build display (12-hour) and ISO strings
+        def fmt_display(dt: datetime) -> str:
+            return dt.strftime('%Y-%m-%d %I:%M:%S %p')
+
+        def fmt_iso(dt: datetime) -> str:
+            return dt.isoformat()
+
+        # Build last_execution payload
+        last_execution = {
+            "execution_id": execution_id,
+            "bot_type": self.bot_type,
+            "start_time": {
+                "iso": fmt_iso(start_time) if isinstance(start_time, datetime) else str(start_time),
+                "display": fmt_display(start_time) if isinstance(start_time, datetime) else str(start_time)
+            },
+            "end_time": {
+                "iso": fmt_iso(end_time),
+                "display": fmt_display(end_time)
+            },
+            "duration": {
+                "seconds": duration_seconds,
+                "display": duration_formatted
+            },
+            "next_run_time": {
+                "iso": fmt_iso(next_run_time),
+                "display": fmt_display(next_run_time)
+            },
+            "status": "completed" if success else "failed",
+            "success": success,
+            "execution_summary": summary
+        }
+
+        # Only write to disk on success, and overwrite the file with only last_execution
+        if success:
+            self.tracking_data = {
+                "last_execution": last_execution
+            }
+            saved = self._save_tracking_data()
+            if saved:
+                logger.info(f"Saved trivia last_execution for {execution_id}")
+        else:
+            logger.info(f"Not saving tracking data for failed {self.bot_type} bot execution: {execution_id}")
+
+        return {
+            "execution_id": execution_id,
+            "end_time": end_time,
+            "next_run_time": next_run_time,
+            "success": success,
+            "execution_summary": summary
+        }
 
 
 class GardeningBotTracker(BotExecutionTracker):
@@ -290,16 +350,100 @@ class GardeningBotTracker(BotExecutionTracker):
         summary = execution_summary or {}
         summary["plant_data"] = plant_data or {}
         summary["actions_performed"] = actions_performed or []
-        
+
         # Calculate next run time based on plant status
         next_run_interval_hours = self._calculate_next_run_interval(plant_data)
-        
-        return super().complete_execution(
-            execution_id=execution_id,
-            success=success,
-            execution_summary=summary,
-            next_run_interval_hours=next_run_interval_hours
-        )
+
+        # Gather current execution (started earlier)
+        current_exec = self.tracking_data.get("last_execution")
+        if not current_exec or current_exec.get("execution_id") != execution_id:
+            logger.error(f"Execution ID {execution_id} not found in tracking data or doesn't match last execution")
+            return {}
+
+        # Compute end and next run times
+        end_time = datetime.now()
+        start_time = current_exec.get("start_time")
+        duration_td = (end_time - start_time) if isinstance(start_time, datetime) else None
+        duration_seconds = duration_td.total_seconds() if duration_td else 0.0
+        duration_formatted = str(duration_td).split('.')[0] if duration_td else "0:00:00"
+
+        next_run_time = end_time + timedelta(hours=next_run_interval_hours)
+
+        # Extract gardening-specific fields
+        plant_info = plant_data or {}
+        current_stage = plant_info.get("current_stage")
+        next_stage = plant_info.get("next_stage")
+        time_to_next_hours = plant_info.get("time_to_next_hours")
+        modifiers = plant_info.get("modifiers", {})
+        likes_seen = list(modifiers.keys()) if isinstance(modifiers, dict) else []
+
+        # Time to next formatted
+        if isinstance(time_to_next_hours, (int, float)) and time_to_next_hours is not None:
+            ttn_seconds = int(time_to_next_hours * 3600)
+            ttn_td = timedelta(seconds=ttn_seconds)
+            time_to_next_formatted = str(ttn_td)
+        else:
+            time_to_next_formatted = None
+
+        # Build display (12-hour) and ISO strings
+        def fmt_display(dt: datetime) -> str:
+            return dt.strftime('%Y-%m-%d %I:%M:%S %p')
+
+        def fmt_iso(dt: datetime) -> str:
+            return dt.isoformat()
+
+        # Build last_execution payload per requirements
+        last_execution = {
+            "execution_id": execution_id,
+            "bot_type": self.bot_type,
+            "start_time": {
+                "iso": fmt_iso(start_time) if isinstance(start_time, datetime) else str(start_time),
+                "display": fmt_display(start_time) if isinstance(start_time, datetime) else str(start_time)
+            },
+            "end_time": {
+                "iso": fmt_iso(end_time),
+                "display": fmt_display(end_time)
+            },
+            "duration": {
+                "seconds": duration_seconds,
+                "display": duration_formatted
+            },
+            "likes_seen": likes_seen,
+            "current_stage": current_stage,
+            "next_stage": next_stage,
+            "time_to_next": {
+                "hours": time_to_next_hours,
+                "display": time_to_next_formatted
+            },
+            "next_run_time": {
+                "iso": fmt_iso(next_run_time),
+                "display": fmt_display(next_run_time)
+            },
+            "status": "completed" if success else "failed",
+            "success": success
+        }
+
+        # Also keep the full summary inside last_execution for debugging, if desired
+        last_execution["execution_summary"] = summary
+
+        # Only write to disk on success, and overwrite the file with only last_execution
+        if success:
+            self.tracking_data = {
+                "last_execution": last_execution
+            }
+            saved = self._save_tracking_data()
+            if saved:
+                logger.info(f"Saved gardening last_execution for {execution_id}")
+        else:
+            logger.info(f"Not saving tracking data for failed {self.bot_type} bot execution: {execution_id}")
+
+        return {
+            "execution_id": execution_id,
+            "end_time": end_time,
+            "next_run_time": next_run_time,
+            "success": success,
+            "execution_summary": summary
+        }
     
     def _calculate_next_run_interval(self, plant_data: Optional[Dict[str, Any]]) -> float:
         """

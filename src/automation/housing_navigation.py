@@ -704,34 +704,33 @@ class HousingNavigationAutomation(AutomationBase):
                 metadata={"description": "Outside button"}
             )
             
-            # First attempt: Press 'h' and look for house_start
-            pyautogui.press('h')
-            time.sleep(0.3)  # Wait for menu to toggle
-            
-            logger.info("Waiting for house_start to appear...")
-            result = self.wait_for_element(house_start_criteria, timeout=2.0, check_interval=0.5)
-            
-            if result.success:
-                logger.info("House start button found after first 'h' press")
-                # Click the house_start button with retry logic
-                return self._click_house_start_with_retry(house_start_criteria, outside_button_criteria)
-            else:
-                logger.info("House start button not found after first 'h' press, trying second 'h' press...")
-                
-                # Second attempt: Press 'h' again and look for house_start
+            # Retry loop: Press 'h' multiple times until house_start appears
+            max_attempts = 5
+            for attempt in range(1, max_attempts + 1):
                 pyautogui.press('h')
                 time.sleep(0.3)  # Wait for menu to toggle
                 
-                logger.info("Waiting for house_start to appear after second 'h' press...")
+                if attempt == 1:
+                    logger.info("Waiting for house_start to appear...")
+                else:
+                    logger.info(f"Waiting for house_start to appear after {attempt}th 'h' press...")
+                
                 result = self.wait_for_element(house_start_criteria, timeout=2.0, check_interval=0.5)
                 
                 if result.success:
-                    logger.info("House start button found after second 'h' press")
+                    if attempt == 1:
+                        logger.info("House start button found after first 'h' press")
+                    else:
+                        logger.info(f"House start button found after {attempt}th 'h' press")
                     # Click the house_start button with retry logic
                     return self._click_house_start_with_retry(house_start_criteria, outside_button_criteria)
                 else:
-                    logger.error("House start button not found after both 'h' presses")
-                    return ActionResult.failure_result("House start button not found after both 'h' presses")
+                    if attempt < max_attempts:
+                        logger.info(f"House start button not found after {attempt}th 'h' press, trying again...")
+            
+            # If we get here, all attempts failed
+            logger.error(f"House start button not found after {max_attempts} 'h' presses")
+            return ActionResult.failure_result(f"House start button not found after {max_attempts} 'h' presses")
             
         except Exception as e:
             logger.error(f"Failed to toggle housing menu and find house start: {e}")
