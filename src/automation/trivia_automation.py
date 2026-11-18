@@ -3,6 +3,8 @@ Trivia automation module for Wizard101 trivia bot
 Handles browser navigation and trivia-specific tasks
 """
 import subprocess
+import sys
+from urllib.parse import urlparse
 import time
 import pyautogui
 import yaml
@@ -16,6 +18,8 @@ from src.utils.screenshot import ScreenshotManager
 from src.utils.bot_execution_tracker import TriviaBotTracker
 from config import config
 from src.constants import AssetPaths, AutomationConstants
+from src.utils.trivia_matching import normalize_text, find_answer
+from src.utils.foreground_browser import is_chrome_foreground
 
 # Constants for answer positions (pixels to move from question area)
 ANSWER_POSITIONS = {
@@ -177,88 +181,50 @@ class TriviaAutomation(AutomationBase):
         return ActionResult.success_result(f"{name} found")
 
     def execute(self) -> ActionResult:
-        """Execute trivia automation workflow"""
-        # Start tracking execution
-        execution_data = self.execution_tracker.start_execution()
-        execution_id = execution_data["execution_id"]
-        
+        """Run once, stopping on uncertain state and always finalizing tracking."""
+        execution_id = self.execution_tracker.start_execution()["execution_id"]
+        completed, skipped = set(), set()
+        outcome = ActionResult.failure_result("Run interrupted before completion")
         try:
-            logger.info("Starting Trivia Automation...")
-            
-            # Keep running until no more trivias are available
-            max_attempts = 50  # Prevent infinite loops
-            attempt = 0
-            completed_trivias = set()
-            skipped_trivias = set()  # Track trivias that are already completed
-            
-            while attempt < max_attempts:
-                attempt += 1
-                logger.info(f"=== Trivia Automation Attempt {attempt}/{max_attempts} ===")
-                
-                # Open Chrome browser and navigate to main trivia page (only on first attempt)
-                if attempt == 1:
-                    result = self._open_chrome()
-                    if not result.success:
-                        return result
-                    
-                    # Wait for W101 logo to confirm we're on the site
-                    result = self._interact_with_element("W101_LOGO", action="wait")
-                    if not result.success:
-                        logger.error(f"Failed to find W101 logo: {result.message}")
-                        return result
-                    
-                    # Handle login on the main trivia page
-                    result = self._handle_login_if_needed()
-                    if not result.success:
-                        logger.error(f"Login failed: {result.message}")
-                        return result
-                
-                # Look for and complete one trivia
-                result = self._find_and_complete_single_trivia(completed_trivias, skipped_trivias)
-                if not result.success:
-                    logger.info(f"No more trivias available on attempt {attempt}. Completed {len(completed_trivias)} trivias total, skipped {len(skipped_trivias)} already completed.")
+            for step in (self._open_chrome,
+                         lambda: self._interact_with_element("W101_LOGO", action="wait"),
+                         self._handle_login_if_needed):
+                outcome = step()
+                if not outcome.success:
+                    return outcome
+            if not self.trivia_database:
+                outcome = ActionResult.failure_result("Trivia database is empty")
+                return outcome
+            for _ in range(len(self.trivia_database)):
+                outcome = self._find_and_complete_single_trivia(completed, skipped)
+                if not outcome.success:
+                    return outcome
+                if (outcome.data or {}).get("exhausted"):
                     break
-                
-                # Track completed trivia
-                if hasattr(result, 'data') and 'trivia_name' in result.data:
-                    completed_trivias.add(result.data['trivia_name'])
-                    logger.info(f"Completed trivia: {result.data['trivia_name']}. Total completed: {len(completed_trivias)}")
-                
-                # Wait a bit before next attempt
-                time.sleep(0.5)
-            
-            logger.info(f"Trivia automation completed successfully. Total trivias completed: {len(completed_trivias)}")
-            
-            # Complete execution tracking with success
-            completion_info = self.execution_tracker.complete_execution(
-                execution_id=execution_id,
-                success=True,
-                trivia_count=len(completed_trivias),
-                execution_summary={
-                    "attempts_made": attempt,
-                    "skipped_trivias": len(skipped_trivias),
-                    "completed_trivias_list": list(completed_trivias)
-                }
-            )
-            
-            return ActionResult.success_result(f"Trivia automation completed successfully. Total trivias completed: {len(completed_trivias)}")
-            
-        except Exception as e:
-            logger.error(f"Error in trivia automation: {e}")
-            
-            # Complete execution tracking with failure
+                name = (outcome.data or {}).get("trivia_name")
+                if not name or name in completed:
+                    outcome = ActionResult.failure_result("No new verified quiz result; stopping")
+                    return outcome
+                completed.add(name)
+            outcome = ActionResult.success_result(
+                f"Finished: {len(completed)} quiz flows confirmed, {len(skipped)} already unavailable",
+                data={"completed_trivias": sorted(completed), "skipped_trivias": sorted(skipped)})
+            return outcome
+        except (KeyboardInterrupt, SystemExit):
+            outcome = ActionResult.failure_result("Trivia run interrupted")
+            raise
+        except Exception as error:
+            logger.error("Trivia run stopped (%s)", type(error).__name__)
+            outcome = ActionResult.failure_result("Trivia run stopped due to an unexpected error")
+            return outcome
+        finally:
             self.execution_tracker.complete_execution(
-                execution_id=execution_id,
-                success=False,
-                trivia_count=len(completed_trivias) if 'completed_trivias' in locals() else 0,
-                execution_summary={
-                    "error": str(e),
-                    "attempts_made": attempt if 'attempt' in locals() else 0
-                }
-            )
-            
-            return ActionResult.failure_result(f"Trivia automation failed: {e}", error=e)
-    
+                execution_id=execution_id, success=outcome.success,
+                trivia_count=len(completed),
+                execution_summary={"message": outcome.message,
+                                   "completed_trivias_list": sorted(completed),
+                                   "skipped_trivias": len(skipped)})
+
     def _open_chrome(self) -> ActionResult:
         """Open Chrome browser and navigate to main trivia page directly"""
         try:
@@ -376,142 +342,60 @@ class TriviaAutomation(AutomationBase):
             return ActionResult.failure_result(f"Failed to wait for W101 logo: {e}", error=e)
     
     def _handle_login_if_needed(self) -> ActionResult:
-        """Check if login is needed and handle authentication if required"""
+        """Let the operator authenticate; never inspect or type credentials.
+
+        Account identity is explicitly user-confirmed, not machine-verified.
+        Check the foreground browser URL before continuing visual interaction.
+        """
+        blocked = ActionResult.failure_result(
+            "Manual login confirmation required; no credentials typed",
+            data={"needs_human": True, "authenticated": False})
+        if not sys.stdin.isatty():
+            return blocked
+        print("\nSign in yourself in Chrome at https://www.wizard101.com/game/trivia.")
+        print("Confirm your intended account is visibly signed in and no CAPTCHA or verification is pending.")
+        print("Then return here and type READY. After Enter, you have 5 seconds to focus that Chrome tab.")
+        print("Do not type a username or password here. Any other response cancels.")
         try:
-            logger.info("Checking if login is needed...")
-            
-            # Look for login button to determine if login is needed
-            login_button_criteria = ElementSearchCriteria(
-                name="Login Button",
-                element_type=ElementType.BUTTON,
-                detection_methods=[DetectionMethod.TEMPLATE],
-                confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
-                template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.LOGIN_BUTTON)
-            )
-            
-            # Try to find the login button
-            login_button_element = self.ui_detector.find_element(login_button_criteria)
-            
-            if login_button_element:
-                logger.info(f"Found login button at {login_button_element.bounding_box} - login required")
-                
-                # Take a screenshot before login
-                screenshot = self.screenshot_manager.take_screenshot()
-                if screenshot is not None:
-                    self.screenshot_manager.save_screenshot(screenshot, "before_login")
-                
-                # Move mouse to login button center
-                center = login_button_element.center
-                pyautogui.moveTo(center.x, center.y)
-                logger.info(f"Moved mouse to login button: ({center.x}, {center.y})")
-                
-                # Move mouse up 80 pixels from login button
-                click_y = center.y - 60
-                pyautogui.moveTo(center.x, click_y)
-                logger.info(f"Moved mouse up 60 pixels to click position: ({center.x}, {click_y})")
-                
-                # Click at the adjusted position
-                pyautogui.click(center.x, click_y)
-                logger.info("Clicked at adjusted position")
-                
-                # Clear the field and enter username
-                result = self._enter_username()
-                if not result.success:
-                    return result
-                
-                # Take screenshot after entering username
-                screenshot = self.screenshot_manager.take_screenshot()
-                if screenshot is not None:
-                    self.screenshot_manager.save_screenshot(screenshot, "after_username_entered")
-                
-                return ActionResult.success_result("Login completed successfully")
-            else:
-                logger.info("Login button not found - already logged in, skipping login step")
-                return ActionResult.success_result("Already logged in - no login needed")
-            
-        except Exception as e:
-            logger.error(f"Error checking login status: {e}")
-            return ActionResult.failure_result(f"Failed to check login status: {e}", error=e)
-    
-    def _enter_username(self) -> ActionResult:
-        """Clear the username field and enter the username from .env"""
+            if input("Confirmation: ").strip() != "READY":
+                return blocked
+        except EOFError:
+            return blocked
+        time.sleep(5)
+        if not self._foreground_is_trivia_page():
+            return ActionResult.failure_result(
+                "Foreground page is not the approved Wizard101 trivia page; stopped",
+                data={"needs_human": True, "authenticated": False})
+        login_criteria = ElementSearchCriteria(
+            name="Login Button", element_type=ElementType.BUTTON,
+            detection_methods=[DetectionMethod.TEMPLATE],
+            confidence_threshold=AutomationConstants.TRIVIA_CONFIDENCE_THRESHOLD,
+            template_path=config.get_trivia_template_path(AssetPaths.TriviaTemplates.LOGIN_BUTTON))
+        if self.ui_detector.find_element(login_criteria):
+            return blocked
+        return ActionResult.success_result(
+            "Operator confirmed signed-in account; foreground trivia URL checked",
+            data={"authentication_source": "operator_confirmation", "url_verified": True})
+
+    def _foreground_is_trivia_page(self) -> bool:
+        """Read only the address bar, never page credentials or session cookies."""
+        if not is_chrome_foreground():
+            return False
+        previous_clipboard = pyperclip.paste()
         try:
-            logger.info("Clearing username field and entering username...")
-            
-            # Get username from config (loaded from .env)
-            username = config.USERNAME
-            if not username:
-                logger.error("No username found in .env file (WIZARD101_USERNAME)")
-                return ActionResult.failure_result("No username configured in .env file")
-            
-            logger.info(f"Entering username: {username}")
-            
-            # Clear the field using Ctrl+A and Delete
-            pyautogui.hotkey('ctrl', 'a')  # Select all text
-            time.sleep(0.1)
-            pyautogui.press('delete')  # Delete selected text
-            time.sleep(0.1)
-            
-            # Type the username with visible typing
-            pyautogui.write(username, interval=0.005)  # Fast typing
+            pyperclip.copy("")
+            pyautogui.hotkey("ctrl", "l")
+            pyautogui.hotkey("ctrl", "c")
             time.sleep(0.2)
-            
-            logger.info("Username entered successfully")
-            
-            # Move to password field and enter password
-            result = self._enter_password()
-            if not result.success:
-                return result
-            
-            return ActionResult.success_result("Username and password entered successfully")
-            
-        except Exception as e:
-            logger.error(f"Error entering username: {e}")
-            return ActionResult.failure_result(f"Failed to enter username: {e}", error=e)
-    
-    def _enter_password(self) -> ActionResult:
-        """Enter the password in the password field"""
-        try:
-            logger.info("Moving to password field and entering password...")
-            
-            # Get password from config (loaded from .env)
-            password = config.PASSWORD
-            if not password:
-                logger.error("No password found in .env file (WIZARD101_PASSWORD)")
-                return ActionResult.failure_result("No password configured in .env file")
-            
-            # Obfuscate password for logging (show first 2 chars + asterisks)
-            obfuscated_password = password[:2] + "*" * (len(password) - 2) if len(password) > 2 else "*" * len(password)
-            logger.info(f"Entering password: {obfuscated_password}")
-            
-            # Press Tab to move to password field
-            pyautogui.press('tab')
-            time.sleep(0.3)
-            
-            # Clear the password field
-            pyautogui.hotkey('ctrl', 'a')  # Select all text
-            time.sleep(0.1)
-            pyautogui.press('delete')  # Delete selected text
-            time.sleep(0.1)
-            
-            # Type the password with visible typing
-            pyautogui.write(password, interval=0.005)  # Fast typing
-            time.sleep(0.2)
-            
-            logger.info("Password entered successfully")
-            
-            # Press Enter to submit login form
-            logger.info("Pressing Enter to submit login form...")
-            pyautogui.press('enter')
-            time.sleep(0.5)  # Wait for login to process
-            
-            logger.info("Login form submitted")
-            return ActionResult.success_result("Password entered and login form submitted")
-            
-        except Exception as e:
-            logger.error(f"Error entering password: {e}")
-            return ActionResult.failure_result(f"Failed to enter password: {e}", error=e)
-    
+            url = urlparse(pyperclip.paste().strip())
+            return (url.scheme == "https" and url.netloc == "www.wizard101.com"
+                    and url.path == "/game/trivia" and not url.query and not url.fragment)
+        except Exception:
+            return False
+        finally:
+            pyautogui.press("esc")
+            pyperclip.copy(previous_clipboard)
+
     def _load_trivia_database(self) -> dict:
         """Load trivia database from YAML file"""
         try:
@@ -529,203 +413,56 @@ class TriviaAutomation(AutomationBase):
             return {}
     
     def _find_and_complete_single_trivia(self, completed_trivias: set, skipped_trivias: set) -> ActionResult:
-        """Find and complete a single trivia using URL-based navigation"""
-        try:
-            logger.info("Looking for available trivia...")
-            
-            if not self.trivia_database:
-                logger.warning("No trivias found in database")
-                return ActionResult.failure_result("No trivias found in database")
-            
-            # Calculate how many trivias are left to try
-            total_trivias = len(self.trivia_database)
-            processed_trivias = len(completed_trivias) + len(skipped_trivias)
-            remaining_trivias = total_trivias - processed_trivias
-            
-            if remaining_trivias == 0:
-                logger.info("All trivias have been processed")
-                return ActionResult.failure_result("All trivias have been processed")
-            
-            logger.info(f"Trying trivias: {remaining_trivias} remaining out of {total_trivias} total")
-            
-            # Try each trivia in the database until we find one that works
-            for trivia_name, trivia_data in self.trivia_database.items():
-                # Skip trivias we've already completed or determined are completed
-                if trivia_name in completed_trivias or trivia_name in skipped_trivias:
-                    logger.debug(f"Skipping {trivia_name} - already processed")
-                    continue
-                
-                logger.info(f"Trying trivia: {trivia_name}")
-                
-                # Navigate directly to this trivia's URL
-                result = self._navigate_to_trivia(trivia_name)
-                if not result.success:
-                    logger.warning(f"Failed to navigate to {trivia_name}: {result.message}")
-                    continue
-                
-                # Check if trivia banner is present - if not, trivia is already completed
-                result = self._interact_with_element("TRIVIA_BANNER", action="wait")
-                if not result.success:
-                    logger.info(f"Trivia banner not found for {trivia_name} - trivia already completed, skipping to next trivia")
-                    skipped_trivias.add(trivia_name)
-                    continue
-                
-                # Try to complete this trivia
-                result = self._complete_single_trivia(trivia_name)
-                if result.success:
-                    logger.info(f"Successfully completed trivia: {trivia_name}")
-                    return ActionResult.success_result(f"Successfully completed trivia: {trivia_name}", data={'trivia_name': trivia_name})
-                else:
-                    logger.warning(f"Failed to complete trivia {trivia_name}: {result.message}")
-                    # Continue to next trivia
-                    continue
-            
-            logger.info("No available trivias found")
-            return ActionResult.failure_result("No available trivias found")
-            
-        except Exception as e:
-            logger.error(f"Error finding and completing trivia: {e}")
-            return ActionResult.failure_result(f"Failed to find and complete trivia: {e}", error=e)
-    
-    
+        """Never interpret missing UI, errors, or human checks as completed quizzes."""
+        for name in self.trivia_database:
+            if name in completed_trivias or name in skipped_trivias:
+                continue
+            result = self._navigate_to_trivia(name)
+            if not result.success:
+                return result
+            result = self._interact_with_element("TRIVIA_BANNER", action="wait")
+            if not result.success:
+                return ActionResult.failure_result(
+                    "Quiz page not recognized. Check login, page layout, or human verification; stopped",
+                    data={"needs_human": True, "trivia_name": name})
+            result = self._complete_single_trivia(name)
+            if not result.success:
+                return result
+            return ActionResult.success_result("Quiz flow confirmed", data={"trivia_name": name})
+        return ActionResult.success_result("All configured quizzes processed", data={"exhausted": True})
+
     def _complete_single_trivia(self, trivia_name: str) -> ActionResult:
-        """Complete all questions in a single trivia until finished"""
-        try:
-            logger.info(f"Starting completion of trivia: {trivia_name}")
-            question_count = 0
-            
-            max_questions = 12  # Limit to 12 questions maximum
-            while question_count < max_questions:
-                question_count += 1
-                logger.info(f"\nProcessing question {question_count} for {trivia_name}")
-                
-                # Extract question text using clipboard with retry logic
-                question_extracted = False
-                max_retries = 5
-                retry_count = 0
-                
-                while not question_extracted and retry_count < max_retries:
-                    retry_count += 1
-                    logger.info(f"Attempting to extract question {question_count} (attempt {retry_count}/{max_retries})")
-                    
-                    result = self._extract_trivia_content(question_count)
-                    
-                    # Special check: If extraction failed because we found the reward button, stop immediately
-                    if not result.success and "Trivia completed" in result.message:
-                        logger.info("Trivia completion detected during question extraction")
-                        question_extracted = False # Ensure loop breaks correctly
-                        break 
+        """Fail closed: no guessing, unchecked submissions, or success on timeout."""
+        previous_question = None
+        for number in range(1, 13):
+            result = self._extract_trivia_content(number)
+            if not result.success:
+                return result
+            data = result.data or {}
+            question = data.get("question_text", "").splitlines()
+            question = question[0].strip() if question else ""
+            normalized = normalize_text(question)
+            if not normalized or normalized == previous_question:
+                return ActionResult.failure_result("Question empty or unchanged; stopped without submitting")
+            previous_question = normalized
+            answer = self._find_answer_for_question(trivia_name, question)
+            if answer is None:
+                return ActionResult.failure_result("Unknown or ambiguous question; manual review needed",
+                                                   data={"needs_human": True})
+            if "question_position" not in data:
+                return ActionResult.failure_result("Question position unavailable")
+            time.sleep(1.0)
+            if not self._find_and_click_correct_answer(data["question_position"], answer, question):
+                return ActionResult.failure_result("Answer option not found; nothing submitted")
+            result = self._interact_with_element("SUBMIT_BUTTON", action="click")
+            if not result.success:
+                return result
+            result = self._interact_with_element("SUBMIT_BUTTON", action="wait_disappear")
+            if not result.success:
+                return ActionResult.failure_result("Answer transition unconfirmed; stopped")
+            time.sleep(1.0)
+        return self._handle_reward_claiming()
 
-                    if not result.success:
-                        logger.warning(f"Failed to extract question {question_count} on attempt {retry_count}: {result.message}")
-                        if retry_count < max_retries:
-                            logger.info(f"Sleeping for 0.5 second before retry {retry_count + 1}...")
-                            time.sleep(0.5)
-                        continue
-                    
-                    question_text = result.data.get('question_text', 'N/A')
-                    
-                    # Check if we got a valid question (not empty, not "N/A", not just whitespace)
-                    if question_text and question_text != 'N/A' and len(question_text.strip()) > 0:
-                        # Clean up question text if it captured the first answer (newline present)
-                        if '\n' in question_text:
-                            question_text = question_text.split('\n')[0].strip()
-                        if '\r' in question_text:
-                            question_text = question_text.split('\r')[0].strip()
-                            
-                        logger.info(f"Question {question_count}: {question_text}")
-                        question_extracted = True
-                    else:
-                        logger.warning(f"Invalid question text extracted on attempt {retry_count}: '{question_text}'")
-                        if retry_count < max_retries:
-                            logger.info(f"Sleeping for 0.5 second before retry {retry_count + 1}...")
-                            time.sleep(0.5)
-                        continue
-                
-                # If we couldn't extract a valid question after all retries
-                if not question_extracted:
-                    # Check if it was because of completion
-                    if "Trivia completed" in result.message:
-                        logger.info("Trivia completed confirmed")
-                        break
-                        
-                    logger.warning(f"Failed to extract valid question {question_count} after {max_retries} attempts")
-                    # Check if we've reached the end of the trivia
-                    banner_result = self._check_trivia_banner_present()
-                    if not banner_result.success:
-                        logger.info(f"Trivia {trivia_name} appears to be complete (no more questions)")
-                        break
-                    continue
-                
-                # Match question to answer in database
-                answer = self._find_answer_for_question(trivia_name, question_text)
-                if not answer:
-                    logger.warning(f"No answer found for question {question_count}: {question_text}")
-                    # Still try to continue to next question
-                    time.sleep(2.0)
-                    continue
-                
-                logger.info(f"Answer: {answer}")
-                
-                # Wait for answers to populate (they load one by one)
-                # The animation takes a moment, and reading too early results in empty text
-                logger.info("Waiting for answer choices to fully load...")
-                time.sleep(1.0)
-                
-                # Find and click the correct answer option
-                question_position = result.data.get('question_position', (0, 0))
-                self._find_and_click_correct_answer(question_position, answer, question_text)
-                
-                # Wait for and click submit answer button
-                submit_result = self._interact_with_element("SUBMIT_BUTTON", action="click")
-                if not submit_result.success:
-                    logger.warning(f"Failed to find submit answer button for question {question_count}")
-                    # Still continue to next question
-                    time.sleep(2.0)
-                    continue
-                
-                # Reset mouse position by moving up 50 pixels
-                current_x, current_y = pyautogui.position()
-                pyautogui.moveTo(current_x, current_y - 50)
-
-                logger.info(f"Successfully submitted answer for question {question_count}")
-                
-                # Wait for submit button to disappear, indicating transition to next question
-                disappear_result = self._interact_with_element("SUBMIT_BUTTON", action="wait_disappear")
-                if not disappear_result.success:
-                    logger.warning(f"Submit button did not disappear after question {question_count}, but continuing...")
-                
-                # Check completion based on question count
-                if question_count >= 12:
-                    logger.info("12 questions completed. Expecting reward page...")
-                    break
-                
-                # Add a delay to allow the next question to load
-                logger.info("Waiting for transition...")
-                time.sleep(1.0)
-                
-                # We used to check for reward button here, but now we rely strictly on count
-                # to avoid false positives.
-            
-            # Check if we reached the maximum questions limit
-            if question_count >= max_questions:
-                logger.info(f"Reached maximum questions limit ({max_questions}) for {trivia_name}")
-            
-            # After the loop ends, handle reward claiming
-            logger.info(f"Trivia {trivia_name} completed with {question_count} questions - starting reward claiming")
-            reward_result = self._handle_reward_claiming()
-            if reward_result.success:
-                logger.info("Reward claiming completed successfully")
-            else:
-                logger.warning(f"Reward claiming failed: {reward_result.message}")
-            
-            logger.info(f"Completed trivia {trivia_name} with {question_count} questions")
-            return ActionResult.success_result(f"Completed trivia {trivia_name} with {question_count} questions")
-            
-        except Exception as e:
-            logger.error(f"Error completing trivia {trivia_name}: {e}")
-            return ActionResult.failure_result(f"Failed to complete trivia {trivia_name}: {e}", error=e)
-    
     def _check_trivia_banner_present(self) -> ActionResult:
         """Check if the trivia banner is present to determine if trivia is available"""
         try:
@@ -783,87 +520,20 @@ class TriviaAutomation(AutomationBase):
                     logger.info(f"Trivia banner not found on attempt {attempt}, waiting 1 second...")
                     time.sleep(1)
             
-            # If we get here, banner was not found after all attempts
-            logger.warning("Could not find trivia banner after all attempts - using fallback positioning")
-            # Fallback to center screen positioning
-            screen_width, screen_height = pyautogui.size()
-            center_x = screen_width // 2
-            center_y = screen_height // 2
-            pyautogui.moveTo(center_x, center_y)
-            logger.info(f"Fallback: Moved mouse to screen center: ({center_x}, {center_y})")
-            
-            return ActionResult.success_result("Mouse positioned at fallback location", data={
-                'question_position': (center_x, center_y)
-            })
-            
+            return ActionResult.failure_result(
+                "Question banner not found; stopped instead of clicking a guessed location",
+                data={"needs_human": True})
+
         except Exception as e:
             logger.error(f"Error positioning mouse for question extraction: {e}")
             return ActionResult.failure_result(f"Failed to position mouse: {e}", error=e)
     
-    def _find_answer_for_question(self, trivia_name: str, question_text: str) -> str:
-        """Find the answer for a given question in the trivia database"""
-        try:
-            if trivia_name not in self.trivia_database:
-                logger.warning(f"Trivia {trivia_name} not found in database")
-                return None
-            
-            trivia_data = self.trivia_database[trivia_name]
-            questions = trivia_data.get('questions', {})
-            
-            # Try exact match first
-            if question_text in questions:
-                return questions[question_text]
-            
-            # Try partial match (in case of slight differences)
-            for db_question, answer in questions.items():
-                # Check if the extracted question contains key parts of the database question
-                if self._questions_match(question_text, db_question):
-                    logger.info(f"Partial match found for question")
-                    return answer
-            
-            logger.warning(f"No match found for question: {question_text}")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error finding answer for question: {e}")
-            return None
-    
+    def _find_answer_for_question(self, trivia_name: str, question_text: str):
+        questions = self.trivia_database.get(trivia_name, {}).get("questions", {})
+        return find_answer(questions, question_text)
+
     def _questions_match(self, extracted_question: str, database_question: str) -> bool:
-        """Check if two questions match (handles slight variations)"""
-        try:
-            # Convert to lowercase for comparison
-            extracted_lower = extracted_question.lower().strip()
-            database_lower = database_question.lower().strip()
-            
-            # Remove common punctuation and extra spaces
-            import re
-            extracted_clean = re.sub(r'[^\w\s]', ' ', extracted_lower)
-            database_clean = re.sub(r'[^\w\s]', ' ', database_lower)
-            
-            # Remove extra whitespace
-            extracted_clean = re.sub(r'\s+', ' ', extracted_clean).strip()
-            database_clean = re.sub(r'\s+', ' ', database_clean).strip()
-            
-            # Check if they're the same
-            if extracted_clean == database_clean:
-                return True
-            
-            # Check if extracted question contains most of the database question
-            # (useful for cases where OCR might miss some words)
-            database_words = set(database_clean.split())
-            extracted_words = set(extracted_clean.split())
-            
-            # If extracted question contains at least 80% of the database question words
-            if len(database_words) > 0:
-                match_ratio = len(database_words.intersection(extracted_words)) / len(database_words)
-                if match_ratio >= 0.8:
-                    return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error comparing questions: {e}")
-            return False
+        return bool(normalize_text(extracted_question)) and normalize_text(extracted_question) == normalize_text(database_question)
 
     def _copy_text_from_position(self, x, y):
         """Move mouse to position, triple-click, and copy text to clipboard"""
@@ -871,6 +541,7 @@ class TriviaAutomation(AutomationBase):
         time.sleep(0.1)  # Delay after moving mouse
         pyautogui.tripleClick()
         time.sleep(0.1)  # Delay after selection
+        pyperclip.copy('')  # Prevent a failed copy from reusing stale clipboard text
         pyautogui.hotkey('ctrl', 'c')
         time.sleep(0.1)  # Delay after copying
         return pyperclip.paste().strip()
@@ -935,73 +606,20 @@ class TriviaAutomation(AutomationBase):
                 if self._answers_match(answer_text, correct_answer):
                     logger.info(f"Found Correct Answer: {answer_text}")
                     self._click_answer_checkbox(answer_x, target_y, answer_text)
-                    return
+                    return True
                 else:
                     logger.info(f"[WRONG] Not the correct answer: {answer_text}")
             
             logger.warning("Could not find the correct answer among the options")
+            return False
             
         except Exception as e:
-            logger.error(f"Error finding correct answer: {e}")
+            logger.error("Error finding correct answer (%s)", type(e).__name__)
+            return False
     
     def _answers_match(self, extracted_answer, correct_answer):
-        """Check if the extracted answer matches the correct answer"""
-        try:
-            # Convert to lowercase for comparison
-            extracted_lower = extracted_answer.lower().strip()
-            correct_lower = correct_answer.lower().strip()
-            
-            # First try exact match
-            if extracted_lower == correct_lower:
-                return True
-            
-            # Clean both answers by removing all punctuation and extra spaces
-            import re
-            extracted_clean = re.sub(r'[^\w\s]', ' ', extracted_lower)
-            correct_clean = re.sub(r'[^\w\s]', ' ', correct_lower)
-            
-            # Remove extra whitespace
-            extracted_clean = re.sub(r'\s+', ' ', extracted_clean).strip()
-            correct_clean = re.sub(r'\s+', ' ', correct_clean).strip()
-            
-            # Check if they're the same after cleaning
-            if extracted_clean == correct_clean:
-                return True
-            
-            # Check if extracted answer contains most of the correct answer words
-            correct_words = set(correct_clean.split())
-            extracted_words = set(extracted_clean.split())
-            
-            # If extracted answer contains at least 80% of the correct answer words
-            if len(correct_words) > 0:
-                match_ratio = len(correct_words.intersection(extracted_words)) / len(correct_words)
-                if match_ratio >= 0.8:
-                    return True
-            
-            # Special handling for common unicode/punctuation issues
-            # Handle apostrophes and other common unicode characters
-            extracted_normalized = extracted_lower.replace("'", "").replace("'", "").replace("'", "")
-            correct_normalized = correct_lower.replace("'", "").replace("'", "").replace("'", "")
-            
-            if extracted_normalized == correct_normalized:
-                return True
-            
-            # Clean normalized versions
-            extracted_norm_clean = re.sub(r'[^\w\s]', ' ', extracted_normalized)
-            correct_norm_clean = re.sub(r'[^\w\s]', ' ', correct_normalized)
-            extracted_norm_clean = re.sub(r'\s+', ' ', extracted_norm_clean).strip()
-            correct_norm_clean = re.sub(r'\s+', ' ', correct_norm_clean).strip()
-            
-            if extracted_norm_clean == correct_norm_clean:
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error comparing answers: {e}")
-            return False
-    
-    
+        return bool(normalize_text(extracted_answer)) and normalize_text(extracted_answer) == normalize_text(correct_answer)
+
     def _handle_reward_claiming(self) -> ActionResult:
         """Handle the reward claiming process after trivia completion"""
         try:
@@ -1020,10 +638,12 @@ class TriviaAutomation(AutomationBase):
             # Wait for take another quiz button to confirm reward flow is complete
             wait_result = self._interact_with_element("TAKE_ANOTHER_QUIZ", action="wait")
             if not wait_result.success:
-                logger.warning(f"Take another quiz button did not appear: {wait_result.message}")
+                return ActionResult.failure_result(
+                    "Reward flow not confirmed. Complete any human verification manually; stopped",
+                    data={"needs_human": True, "reward_verified": False})
             
-            logger.info("Reward claiming process completed successfully")
-            return ActionResult.success_result("Reward claiming completed successfully")
+            logger.info("Reward flow completed; currency balance was not independently verified")
+            return ActionResult.success_result("Reward flow completed; balance unverified", data={"reward_flow_confirmed": True, "reward_balance_verified": False})
             
         except Exception as e:
             logger.error(f"Error in reward claiming process: {e}")

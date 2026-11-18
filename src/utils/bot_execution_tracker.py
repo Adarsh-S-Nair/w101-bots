@@ -239,89 +239,45 @@ class TriviaBotTracker(BotExecutionTracker):
     def __init__(self, tracking_dir: str = "bot_tracking"):
         super().__init__("trivia", tracking_dir)
     
-    def complete_execution(self, execution_id: str, success: bool = True, 
-                          trivia_count: int = 0, execution_summary: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Complete trivia bot execution with trivia-specific data
-        
-        Args:
-            execution_id: ID of the execution to complete
-            success: Whether the execution was successful
-            trivia_count: Number of trivias completed
-            execution_summary: Additional execution summary data
-            
-        Returns:
-            Dict containing completion info and next run time
-        """
-        summary = execution_summary or {}
+    def start_execution(self, additional_data=None):
+        # Migrate the older successful-only payload before replacing last_execution.
+        previous = self.tracking_data.get("last_execution", {})
+        if previous.get("success") and not self.tracking_data.get("next_run_time"):
+            previous_next = previous.get("next_run_time")
+            self.tracking_data["next_run_time"] = (
+                previous_next.get("iso") if isinstance(previous_next, dict) else previous_next)
+            self.tracking_data["last_successful_execution"] = previous
+        return super().start_execution(additional_data)
+
+    def complete_execution(self, execution_id: str, success: bool = True,
+                           trivia_count: int = 0, execution_summary=None):
+        """Persist every result, while failed attempts do not reset eligibility."""
+        current = self.tracking_data.get("last_execution")
+        if not current or current.get("execution_id") != execution_id:
+            raise ValueError("Execution ID does not match the active trivia run")
+        end = datetime.now()
+        start = current.get("start_time")
+        if isinstance(start, str):
+            start = datetime.fromisoformat(start)
+        duration = (end - start).total_seconds() if isinstance(start, datetime) else 0.0
+        summary = dict(execution_summary or {})
         summary["trivias_completed"] = trivia_count
-
-        # Gather current execution (started earlier)
-        current_exec = self.tracking_data.get("last_execution")
-        if not current_exec or current_exec.get("execution_id") != execution_id:
-            logger.error(f"Execution ID {execution_id} not found in tracking data or doesn't match last execution")
-            return {}
-
-        # Compute end and next run times
-        end_time = datetime.now()
-        start_time = current_exec.get("start_time")
-        duration_td = (end_time - start_time) if isinstance(start_time, datetime) else None
-        duration_seconds = duration_td.total_seconds() if duration_td else 0.0
-        duration_formatted = str(duration_td).split('.')[0] if duration_td else "0:00:00"
-
-        next_run_interval_hours = 20.0
-        next_run_time = end_time + timedelta(hours=next_run_interval_hours)
-
-        # Build display (12-hour) and ISO strings
-        def fmt_display(dt: datetime) -> str:
-            return dt.strftime('%Y-%m-%d %I:%M:%S %p')
-
-        def fmt_iso(dt: datetime) -> str:
-            return dt.isoformat()
-
-        # Build last_execution payload
-        last_execution = {
-            "execution_id": execution_id,
-            "bot_type": self.bot_type,
-            "start_time": {
-                "iso": fmt_iso(start_time) if isinstance(start_time, datetime) else str(start_time),
-                "display": fmt_display(start_time) if isinstance(start_time, datetime) else str(start_time)
-            },
-            "end_time": {
-                "iso": fmt_iso(end_time),
-                "display": fmt_display(end_time)
-            },
-            "duration": {
-                "seconds": duration_seconds,
-                "display": duration_formatted
-            },
-            "next_run_time": {
-                "iso": fmt_iso(next_run_time),
-                "display": fmt_display(next_run_time)
-            },
-            "status": "completed" if success else "failed",
-            "success": success,
-            "execution_summary": summary
-        }
-
-        # Only write to disk on success, and overwrite the file with only last_execution
+        completed = dict(current, end_time=end.isoformat(), duration_seconds=duration,
+                         status="completed" if success else "failed", success=success,
+                         execution_summary=summary)
+        completed["start_time"] = start.isoformat() if isinstance(start, datetime) else start
+        history = list(self.tracking_data.get("executions", []))
+        history.append(completed)
+        self.tracking_data["executions"] = history[-100:]
+        self.tracking_data["last_execution"] = completed
         if success:
-            self.tracking_data = {
-                "last_execution": last_execution
-            }
-            saved = self._save_tracking_data()
-            if saved:
-                logger.info(f"Saved trivia last_execution for {execution_id}")
-        else:
-            logger.info(f"Not saving tracking data for failed {self.bot_type} bot execution: {execution_id}")
-
-        return {
-            "execution_id": execution_id,
-            "end_time": end_time,
-            "next_run_time": next_run_time,
-            "success": success,
-            "execution_summary": summary
-        }
+            self.tracking_data["last_successful_execution"] = completed
+            self.tracking_data["next_run_time"] = (end + timedelta(hours=20)).isoformat()
+        if not self._save_tracking_data():
+            raise OSError("Could not persist trivia execution result")
+        return {"execution_id": execution_id, "end_time": end,
+                "next_run_time": self.get_next_run_time(), "success": success,
+                "execution_summary": summary}
 
 
 class GardeningBotTracker(BotExecutionTracker):
