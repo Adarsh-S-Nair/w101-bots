@@ -1,0 +1,2 @@
+# Optional safe automatic login adapter. Install into the existing Windows venv.
+pywinauto==0.6.9; sys_platform == "win32"

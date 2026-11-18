@@ -20,6 +20,7 @@ from config import config
 from src.constants import AssetPaths, AutomationConstants
 from src.utils.trivia_matching import normalize_text, find_answer
 from src.utils.foreground_browser import is_chrome_foreground
+from src.utils.trivia_auth import try_auto_login
 
 # Constants for answer positions (pixels to move from question area)
 ANSWER_POSITIONS = {
@@ -342,13 +343,14 @@ class TriviaAutomation(AutomationBase):
             return ActionResult.failure_result(f"Failed to wait for W101 logo: {e}", error=e)
     
     def _handle_login_if_needed(self) -> ActionResult:
-        """Let the operator authenticate; never inspect or type credentials.
-
-        Account identity is explicitly user-confirmed, not machine-verified.
-        Check the foreground browser URL before continuing visual interaction.
-        """
+        """Try verified UIA auto-login, otherwise offer an explicit manual fallback."""
+        auth = try_auto_login(config.USERNAME, config.PASSWORD)
+        if auth["authenticated"]:
+            return ActionResult.success_result("Account sign-in verified through accessibility",
+                                               data={"authentication_source": "verified_uia"})
+        logger.info("Automatic sign-in unavailable or unconfirmed (%s); manual fallback required", auth["reason"])
         blocked = ActionResult.failure_result(
-            "Manual login confirmation required; no credentials typed",
+            "Manual login confirmation required; automatic sign-in did not confirm success",
             data={"needs_human": True, "authenticated": False})
         if not sys.stdin.isatty():
             return blocked

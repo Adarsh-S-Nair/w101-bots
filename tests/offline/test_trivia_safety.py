@@ -14,7 +14,7 @@ SOURCE = Path(__file__).resolve().parents[2] / 'src/automation/trivia_automation
 tree = ast.parse(SOURCE.read_text())
 class_node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'TriviaAutomation')
 module = ast.Module(body=[class_node], type_ignores=[])
-namespace = dict(is_chrome_foreground=Mock(return_value=True), sys=Mock(), AutomationBase=object, ActionResult=ActionResult,
+namespace = dict(try_auto_login=Mock(return_value={'authenticated': False, 'reason': 'test'}), config=Mock(), is_chrome_foreground=Mock(return_value=True), sys=Mock(), AutomationBase=object, ActionResult=ActionResult,
                  normalize_text=normalize_text, find_answer=find_answer,
                  logger=Mock(), time=Mock(), pyautogui=Mock(),
                  ANSWER_POSITIONS={'first': {'x': -200, 'y': 50}, 'second': {'x': 80, 'y': 50},
@@ -128,7 +128,7 @@ if __name__ == '__main__':
 
 class AuthenticationAndInterruptTests(unittest.TestCase):
     setUp = WorkflowTests.setUp
-    def test_login_cannot_type_credentials(self):
+    def test_manual_fallback_cannot_type_credentials(self):
         namespace['pyautogui'].reset_mock()
         namespace['sys'].stdin.isatty.return_value = False
         result = TriviaAutomation._handle_login_if_needed(self.bot)
