@@ -9,7 +9,7 @@ if not exist venv\Scripts\activate.bat (
 )
 
 call venv\Scripts\activate.bat
-python main.py --type trivia
+python main.py --type trivia --custom-only
 
 if errorlevel 1 (
     echo.

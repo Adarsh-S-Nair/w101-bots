@@ -55,7 +55,7 @@ if a login control is still visible. Account identity is operator-confirmed,
 not independently machine-verified. Noninteractive runs stop, not guess.
 
 To try on the existing Windows checkout/virtual environment after reviewing site
-rules and these changes: run `python main.py --type trivia`. Sign in yourself,
+rules and these changes: run `python main.py --type trivia --custom-only`. Sign in yourself,
 return to the terminal, type READY, then click back into the Chrome trivia tab.
 Keep the browser foreground and do not use the desktop during execution. Stop
 with Ctrl+C or PyAutoGUI's corner fail-safe if the wrong window has focus. Any
